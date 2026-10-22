@@ -88,6 +88,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'list.subtitle': 'Una buena mañana para ponerse al día.',
     'list.select': 'Seleccionar',
     'list.upToDate': 'Estás al día',
+    'list.emptyNoMessages': 'Sin mensajes todavía. Sincroniza tu cuenta o añade una para empezar.',
     'batch.archive': 'Archivar',
     'batch.delete': 'Eliminar',
     // Panel de lectura

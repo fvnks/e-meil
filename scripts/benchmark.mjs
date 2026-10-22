@@ -111,7 +111,8 @@ async function main() {
   // --- 1-2. Arranque en frío ------------------------------------------------
   const navStart = Date.now();
   await client.send('Page.navigate', { url: APP_URL });
-  const readyMs = await waitFor(client, `document.querySelectorAll('.message-row').length > 0`, 15_000, 40);
+  // "App lista": la bandeja terminó de renderizar (filas reales o estado vacío).
+  const readyMs = await waitFor(client, `document.querySelectorAll('.message-row, .messages .empty-state').length > 0`, 15_000, 40);
   const navigation = await client.evaluate(`(() => {
     const entry = performance.getEntriesByType('navigation')[0];
     return entry ? { dcl: Math.round(entry.domContentLoadedEventEnd), load: Math.round(entry.loadEventEnd) } : null;
@@ -154,7 +155,7 @@ async function main() {
     switchTimings.contacts.push(Math.round(elapsed));
     t = await client.evaluate(`performance.now()`);
     await client.evaluate(`(() => { const rail = Array.from(document.querySelectorAll('.rail-item')); rail[0].click(); return 'ok'; })()`);
-    elapsed = await waitFor(client, `document.querySelectorAll('.message-row').length > 0`, 5000, 20);
+    elapsed = await waitFor(client, `document.querySelectorAll('.message-row, .messages .empty-state').length > 0`, 5000, 20);
     switchTimings.mail.push(Math.round(elapsed));
   }
   record('Cambio de vista → calendario (mediana)', median(switchTimings.calendar), BUDGETS.viewSwitchMs);

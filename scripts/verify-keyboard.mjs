@@ -10,6 +10,9 @@
  *  4. Escape cierra en cascada: menú contextual → menú de temas → panel de
  *     filtros → drawer móvil.
  *
+ * Sin mocks: el menú se abre sobre el área vacía (contextmenu burbujea al
+ * window handler); la navegación se valida contra N ítems reales.
+ *
  * Requiere Chrome headless con CDP en 9222.
  * Uso: node scripts/verify-keyboard.mjs [url]
  */
@@ -109,11 +112,12 @@ async function main() {
   await sleep(2500);
 
   // --- 1. Apertura del menú contextual -------------------------------------
-  await client.evaluate(`(() => {
-    const row = document.querySelector('.message-row');
-    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+  const openMenu = `(() => {
+    const target = document.querySelector('.message-row') || document.body;
+    target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
     return 'ok';
-  })()`);
+  })()`;
+  await client.evaluate(openMenu);
   await sleep(400);
   const first = await client.evaluate(FOCUS_ITEM);
   record('El menú abre y el foco entra al primer menuitem', first.menuOpen && first.role === 'menuitem', JSON.stringify(first));
@@ -149,11 +153,7 @@ async function main() {
   const closedByEsc = await client.evaluate(`!document.querySelector('.context-menu')`);
   record('Escape cierra el menú contextual', closedByEsc === true);
 
-  await client.evaluate(`(() => {
-    const row = document.querySelector('.message-row');
-    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
-    return 'ok';
-  })()`);
+  await client.evaluate(openMenu);
   await sleep(400);
   await client.pressKey('Tab');
   await sleep(200);
