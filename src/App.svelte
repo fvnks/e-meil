@@ -15,6 +15,10 @@ import { initLocale, t } from './lib/i18n';
   import { inspectAttachment, sendSmtpMail } from './lib/smtp';
   import { archiveGraphMessage, createGraphDraft, deleteGraphMessage, listGraphMessages, markGraphMessage, sendGraphMessage } from './lib/graph';
   import { notifyNewMail as notifyNewMailDesktop, type NewMailSummary } from './lib/notifications';
+  import { isTauri } from '@tauri-apps/api/core';
+  import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
+  import { onOpenUrl } from '@tauri-apps/plugin-deep-link';
   import type { UnifiedMessage } from './lib/mail-repository';
   import { open } from '@tauri-apps/plugin-dialog';
   import Modal from './lib/Modal.svelte';
@@ -87,8 +91,7 @@ import { initLocale, t } from './lib/i18n';
   }
   function closeContextMenu() { contextMenu = null; }
   // Navegación por teclado del menú contextual (patrón APG role="menu").
-  function handleMenuKeydown(event: KeyboardEvent) {
-    event.stopPropagation();
+  function handleMenuKeydown(event: KeyboardEvent) {    event.stopPropagation();
     const items = Array.from(document.querySelectorAll<HTMLButtonElement>('.context-menu [role="menuitem"]'));
     if (!items.length) return;
     const index = items.findIndex((item) => item === document.activeElement);
@@ -101,7 +104,17 @@ import { initLocale, t } from './lib/i18n';
   }
   // Escape cierra el popup más alto de la pila; los modales (Modal.svelte) lo
   // gestionan por sí mismos con su propio detector en fase de captura.
+  // Atajos estilo Outlook: Ctrl/Cmd+N redactar, F buscar, R responder, 1/2/3 vistas.
   function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.ctrlKey || event.metaKey) {
+      const key = event.key.toLowerCase();
+      if (key === 'n') { event.preventDefault(); openCompose(); return; }
+      if (key === 'f') { event.preventDefault(); document.querySelector<HTMLInputElement>('.top-search input')?.focus(); return; }
+      if (key === 'r') { event.preventDefault(); if (activeProvider === 'microsoft-graph' && activeGraphMessage) openReply('graph'); else if (activeRealMessage) openReply('imap'); return; }
+      if (key === '1') { event.preventDefault(); activeView = 'mail'; return; }
+      if (key === '2') { event.preventDefault(); activeView = 'calendar'; return; }
+      if (key === '3') { event.preventDefault(); activeView = 'contacts'; return; }
+    }
     if (event.key !== 'Escape') return;
     if (contextMenu) contextMenu = null;
     else if (themeOpen) themeOpen = false;
@@ -231,6 +244,9 @@ import { initLocale, t } from './lib/i18n';
         configuredAccounts = saved.map((account) => ({ name: account.displayName, email: account.emailAddress, provider: account.provider.toUpperCase() }));
         const remembered = localStorage.getItem('emeil-active-account');
         activeAccount = configuredAccounts.find((account) => account.email === remembered) ?? configuredAccounts[0];
+      } else {
+        // Onboarding: sin cuentas configuradas, el asistente se abre solo.
+        setupOpen = true; setupStep = 'provider';
       }
     } catch { /* The demo remains usable if native persistence is unavailable. */ }
   }
@@ -250,6 +266,7 @@ import { initLocale, t } from './lib/i18n';
   async function toggleCachedState(mail: CachedMessage, field: 'unread' | 'starred') {
     mail[field] = !mail[field];
     await updateCachedMessageState({ accountId: mail.accountId, mailbox: mail.mailbox, uid: mail.uid, [field]: mail[field] });
+    void updateTrayBadge();
   }
   async function batchAction(action: 'archive' | 'delete') {
     if (!activeAccount || selectedUids.size === 0) { syncMessage = 'No hay mensajes seleccionados.'; return; }
@@ -354,7 +371,7 @@ import { initLocale, t } from './lib/i18n';
     if (!activeAccount || activeProvider !== 'microsoft-graph') { syncMessage = 'Selecciona una cuenta Microsoft primero.'; return; }
     const account = activeAccount; const saved = await listAccounts(); const record = saved.find((item) => item.emailAddress === account.email); const clientId = record?.oauthClientId || microsoftClientId; if (!record || !clientId) { syncMessage = 'Autoriza primero una cuenta Microsoft 365.'; return; }
     activeProvider = 'microsoft-graph'; syncing = true; syncMessage = 'Consultando Microsoft Graph…';
-    try { const messages = await listGraphMessages(`microsoft:${clientId}`, clientId, 'common', 30); unifiedMessages = messages.map((message) => ({ id: message.id, accountId: record.id, provider: 'microsoft-graph', mailbox: 'INBOX', subject: message.subject, sender: message.sender, preview: message.preview, receivedAt: message.receivedAt, unread: !message.isRead, starred: false, hasAttachments: message.hasAttachments })); const freshOnes = reportNewMessages(messages.map((message) => ({ id: `graph:${message.id}`, author: message.sender, subject: message.subject, preview: message.preview }))); if (freshOnes.length > 0) notifyNewMail(freshOnes); syncMessage = `Microsoft Graph: ${unifiedMessages.length} mensajes.`; } catch (error) { syncMessage = String(error); } finally { syncing = false; }
+    try { const messages = await listGraphMessages(`microsoft:${clientId}`, clientId, 'common', 30); unifiedMessages = messages.map((message) => ({ id: message.id, accountId: record.id, provider: 'microsoft-graph', mailbox: 'INBOX', subject: message.subject, sender: message.sender, preview: message.preview, receivedAt: message.receivedAt, unread: !message.isRead, starred: false, hasAttachments: message.hasAttachments })); const freshOnes = reportNewMessages(messages.map((message) => ({ id: `graph:${message.id}`, author: message.sender, subject: message.subject, preview: message.preview }))); if (freshOnes.length > 0) notifyNewMail(freshOnes); syncMessage = `Microsoft Graph: ${unifiedMessages.length} mensajes.`; } catch (error) { syncMessage = String(error); } finally { syncing = false; void updateTrayBadge(); }
   }
   async function syncImapAccount(mailbox = selectedMailbox) {
     if (!activeAccount || activeProvider !== 'imap') { syncMessage = 'Agrega una cuenta IMAP para sincronizar.'; return; }
@@ -384,7 +401,7 @@ import { initLocale, t } from './lib/i18n';
       }
       syncMessage = `Sincronizado: ${syncedFolders.length} carpetas y ${syncedMessages.length} mensajes.`;
     } catch (error) { syncMessage = String(error); }
-    finally { syncing = false; }
+    finally { syncing = false; void updateTrayBadge(); }
   }
   /** Hash FNV-1a estable: convierte el UIDL de POP3 en un uid numérico reutilizable. */
   function hashUidl(uidl: string): number {
@@ -423,7 +440,7 @@ import { initLocale, t } from './lib/i18n';
       selectedMailbox = 'INBOX';
       syncMessage = `POP3: ${rows.length} mensajes.`;
     } catch (error) { syncMessage = String(error); }
-    finally { syncing = false; }
+    finally { syncing = false; void updateTrayBadge(); }
   }
   // --- Sincronización automática y notificaciones ---------------------------
   // Cada N minutos (localStorage "emeil-sync-interval-min", por defecto 5) y
@@ -490,6 +507,37 @@ import { initLocale, t } from './lib/i18n';
     finally { serverSearching = false; }
   }
   function exitServerSearch() { serverSearchActive = false; syncActiveAccount(); }
+  // --- Integración con el sistema ---------------------------------------------
+  function escapeHtml(text: string) { return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  // mailto: (deep link del SO) → abre el redactor precargado, como Outlook.
+  function handleMailto(raw: string) {
+    if (!/^mailto:/i.test(raw)) return;
+    const [toPart, queryPart = ''] = raw.slice(7).split('?');
+    const params = new URLSearchParams(queryPart);
+    composeTo = decodeURIComponent(toPart);
+    composeCc = params.get('cc') ?? '';
+    composeBcc = params.get('bcc') ?? '';
+    composeSubject = params.get('subject') ?? '';
+    const body = params.get('body') ?? '';
+    composeHtml = body ? body.split(/\r?\n/).map(escapeHtml).join('<br>') : '';
+    composeAttachments = [];
+    composeNotice = '';
+    composeOpen = true;
+    mobileReadingOpen = false;
+  }
+  if (isTauri()) {
+    void onOpenUrl((urls) => { for (const url of urls) handleMailto(url); });
+    void listen<string>('tray-action', (event) => {
+      if (event.payload === 'compose') openCompose();
+      if (event.payload === 'sync') syncActiveAccount();
+    });
+  }
+  // Tooltip de la bandeja con los no leídos de la cuenta activa.
+  async function updateTrayBadge() {
+    if (!isTauri()) return;
+    const unread = syncedMessages.filter((message) => message.unread).length + unifiedMessages.filter((message) => message.unread).length;
+    try { await tauriInvoke('set_tray_badge', { unread }); } catch { /* la bandeja es opcional */ }
+  }
   function applySuggestions() {
     if (setup.provider === 'imap' || setup.provider === 'pop3') {
       const suggestion = suggestCommonServer(setup.emailAddress, setup.provider);

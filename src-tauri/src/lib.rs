@@ -5,6 +5,7 @@ mod imap_client;
 mod oauth;
 mod pop3_client;
 mod smtp_client;
+mod tray;
 mod graph;
 mod graph_actions;
 mod graph_send;
@@ -16,6 +17,7 @@ pub fn run() {
         .manage(OAuthState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             credentials::save_credential,
             credentials::delete_credential,
@@ -36,23 +38,46 @@ pub fn run() {
             imap_client::delete_imap_message,
             imap_client::append_imap_sent_message,
             imap_client::read_imap_message,
+            imap_client::search_imap_messages,
+            imap_client::save_imap_draft,
             pop3_client::test_pop3_connection,
             pop3_client::list_pop3_messages,
             pop3_client::read_pop3_message,
+            pop3_client::delete_pop3_message,
             oauth::start_microsoft_oauth,
             oauth::poll_microsoft_oauth,
-            pop3_client::delete_pop3_message,
             smtp_client::send_smtp_mail,
             smtp_client::inspect_attachment,
-            imap_client::search_imap_messages,
-            imap_client::save_imap_draft,
             graph::list_graph_messages,
             graph_actions::mark_graph_message,
             graph_actions::archive_graph_message,
             graph_actions::delete_graph_message,
             graph_send::send_graph_message,
-            graph_send::create_graph_draft
+            graph_send::create_graph_draft,
+            tray::set_tray_badge
         ])
+        .setup(|app| {
+            // Ícono de bandeja con menú (Abrir / Redactar / Sincronizar / Salir).
+            tray::build_tray(app.handle())?;
+            // En desarrollo no existe instalador que registre el esquema:
+            // mailto: se registra en el registro de Windows al vuelo.
+            #[cfg(debug_assertions)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let _ = app.deep_link().register_all();
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Como Outlook: cerrar la ventana principal la oculta en la bandeja;
+            // "Salir" del menú de la bandeja es lo que termina la app.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running e-Meil");
 }
