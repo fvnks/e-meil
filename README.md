@@ -10,7 +10,7 @@ Conecta cuentas **Microsoft 365 (Graph)**, **IMAP** y **POP3** a través de adap
 - **IMAP**: TLS directo (993) **o STARTTLS (143)**, prueba de conexión, listado de carpetas y sincronización bajo demanda (hasta 30 mensajes por bandeja). Detección automática de `\Sent`, `\Archive` y `\Drafts` con etiquetas de uso especial. Lectura de mensajes con Base64 decodificado y HTML sanado; descarga de adjuntos con aviso de archivos peligrosos.
 - **POP3**: TLS directo (995) **o STARTTLS/STLS (110)**, prueba de conexión y **sincronización completa**: listado con asunto/remitente/fecha reales (vía `TOP`), lectura resuelviendo UIDL→número (los UIDL alfanuméricos de servidores reales funcionan), eliminación en servidor (`DELE` + `QUIT` confirmado), acciones en lote de borrado y envío por SMTP como cualquier cuenta. Leído/favorito son locales: el protocolo no tiene carpetas, flags ni archivo.
 - **SMTP**: envío real con TLS directo (465) **o STARTTLS (587)**, adjuntos hasta 25 MB, copia automática a la carpeta de enviados IMAP cuando existe; Graph guarda en Sent por sí mismo.
-- **Multicuenta**: selección de cuenta activa desde la barra lateral con persistencia en localStorage; la cuenta gobierna bandeja, sincronización, acciones y envío.
+- **Multicuenta**: asistente para añadir cuentas (Microsoft 365, IMAP con TLS directo o STARTTLS, POP3); sin datos demo, la selección de cuenta activa persiste en localStorage y gobierna bandeja, sincronización, acciones y envío.
 - **Corre, calendario y contactos**: bandeja con búsqueda por texto, filtros ("No leídos", "Con adjuntos"), selección múltiple con acciones en lote; vistas de calendario (mes/semana/día) y contactos con formularios.
 - **Temas de color y modo oscuro**: 5 acentos (Lavanda, Océano, Bosque, Atardecer, Grafito) guardados por dispositivo, más **modo oscuro real** con superficies, textos y bordes tokenizados, conmutable desde el menú de temas, persistido en localStorage y con detección automática de `prefers-color-scheme`.
 
@@ -121,8 +121,22 @@ Modal accesible reutilizable (`src/lib/Modal.svelte`), usado por los formularios
 - Los textos de la UI están en español. La infraestructura de internacionalización existe (`src/lib/i18n.ts`: diccionario por locale, `t()` con interpolación, locale persistido) y cubre **~120 cadenas**: shell completo (rail, topbar, barra lateral, filtros, menú contextual), panel de lectura, asistente de cuentas, formulario de evento, contactos y redactor. El resto (mensajes de estado en la lógica, nombres de carpetas demo y datos de los correos de ejemplo) es trabajo incremental documentado en el propio módulo.
 - Bordes decorativos y separadores claros no alcanzan 3:1 (no aplican como indicadores únicos de estado; pendiente de revisión fina WCAG 1.4.11).
 
+## Instaladores
+
+Los instaladores se generan con `pnpm tauri build` y quedan en `src-tauri/target/release/bundle/` (y se copian a `installers/`, ignorado por git):
+
+| Plataforma | Archivo | Comando |
+|---|---|---|
+| Windows | `e-Meil_0.1.0_x64_en-US.msi` · `e-Meil_0.1.0_x64-setup.exe` | `pnpm tauri build` (nativo) |
+| Linux | `e-Meil_0.1.0_amd64.deb` · `e-Meil_0.1.0_amd64.AppImage` | `pnpm tauri build -b deb,appimage` |
+
+- **Windows**: MSI (WiX) y NSIS se generan nativamente.
+- **Linux**: el bundle requiere el toolchain de Linux; en Windows se puede construir dentro de **WSL2 (Ubuntu 24.04)** con las dependencias de Tauri (`libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev`), Node 20, pnpm y Rust — compilando sobre una copia del proyecto en el filesystem nativo de WSL (`~/mail`) para no mezclar artifacts ni sufrir la lentitud de `/mnt`.
+- **CI**: `release.yml` genera los mismos cuatro instaladores (MSI/NSIS + AppImage/Deb) sobre tags `v*` y los publica como draft de release.
+- Los iconos de bundling se regeneran con `pnpm tauri icon src-tauri/icons/icon.ico`; `tauri.conf.json` lista PNGs cuadrados además del `.ico`/`.icns` (necesarios para Linux).
+
 ## Estado del proyecto
 
-Maqueta navegable con asistente de cuentas (Microsoft 365, IMAP, POP3), sincronización real de correo bajo demanda, envío SMTP/Graph con ciclo OAuth robusto (sondeo con reintento, cancelación de intentos obsoletos, canje sin bloquear la UI), respuesta/reenvío con cita del original, acciones en lote, búsqueda y filtros, calendario y contactos, temas, accesibilidad (contraste AA, focus trap, tooltips, ARIA), responsive móvil e infraestructura i18n. Verificación actual: `svelte-check` 0 errores/0 warnings, `pnpm build` OK, `cargo test` 12/12, scripts a11y 9/9, responsive 12/12 y benchmark 9/9.
+Cliente navegable con asistente de cuentas (Microsoft 365, IMAP, POP3) **sin datos de demostración**: la app presenta estados vacíos reales y un CTA de "Añadir cuenta" hasta conectar la primera cuenta. Sincronización real de correo bajo demanda (IMAP/POP3 con carpetas y STARTTLS, Microsoft Graph con ciclo OAuth robusto), envío SMTP (465/587) o Graph, respuesta/reenvío con cita del original, acciones en lote, búsqueda y filtros, calendario y contactos locales, temas con modo oscuro, accesibilidad (contraste AA auditado en 10 scopes, focus trap, tooltips, teclado APG, Lighthouse 100/100) y responsive móvil. Verificación actual: `svelte-check` 0 errores/0 warnings, `pnpm build` OK, `cargo test` 16/16, scripts a11y 9/9, teclado 7/7, responsive 11/11 y benchmark 9/9.
 
 Véase también [ARCHITECTURE.md](ARCHITECTURE.md) y [SECURITY.md](SECURITY.md).

@@ -9,3 +9,5 @@ acl-recovery/
 !.env.example
 .DS_Store
 *.log
+
+installers/
