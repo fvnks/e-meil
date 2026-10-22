@@ -60,6 +60,9 @@ node scripts/verify-modal-a11y.mjs http://127.0.0.1:5173/
 # Drawer móvil + panel de lectura + redactor a pantalla completa (12 comprobaciones)
 node scripts/verify-responsive.mjs http://127.0.0.1:5173/
 
+# Navegación por teclado: menú contextual (flechas, Home/End) y Escape en cascada (7 comprobaciones)
+node scripts/verify-keyboard.mjs http://127.0.0.1:5173/
+
 # Auditoría de contraste WCAG de styles.css (los hallazgos se listan por ratio)
 node scripts/contrast-audit.mjs
 
@@ -76,6 +79,8 @@ Lighthouse (accesibilidad) sobre la app en desarrollo: **100/100**.
 - **Nombres accesibles**: todos los botones de solo-icono exponen `aria-label` (rail de aplicaciones, ordenar, ayuda, más opciones, añadir cuenta).
 - **Tooltip accesible** (`src/lib/tooltip.ts`): acción Svelte `use:tooltip` con `role="tooltip"`, `aria-describedby`, apertura con hover y foco, cierre con Escape, reposicionamiento con scroll/resize y respeto de `prefers-reduced-motion`.
 - **Menú contextual y filtros**: `role="menu"` con hijos `role="menuitem"`; el disparador de filtros usa `aria-haspopup="menu"` + `aria-expanded` y el panel de filtros es un `role="group"` etiquetado.
+- **Navegación por teclado**: el menú contextual sigue el patrón APG (`ArrowUp`/`ArrowDown` cíclicos, `Home`/`End`, foco automático en el primer ítem al abrir); `Escape` cierra en cascada menú contextual → menú de temas → panel de filtros → drawer móvil (los modales lo gestionan internamente con su focus trap).
+- **Legibilidad**: las fuentes más pequeñas de la UI son de 9px (las de 7–8px fueron subidas).
 - **Lectores de pantalla**: landmarks (`banner`, `navigation`, `complementary`, `main`), enlaces "Saltar al contenido", etiquetas `aria-label` en vistas y contenido principal identificado.
 
 ### Componente `Modal.svelte`
