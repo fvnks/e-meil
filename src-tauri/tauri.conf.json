@@ -12,13 +12,28 @@
   "app": {
     "windows": [
       {
+        "label": "splashscreen",
+        "url": "splash.html",
+        "title": "e-Meil",
+        "width": 400,
+        "height": 300,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "center": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
+      },
+      {
         "label": "main",
         "title": "e-Meil",
         "width": 1360,
         "height": 860,
         "minWidth": 980,
         "minHeight": 640,
-        "resizable": true
+        "resizable": true,
+        "center": true,
+        "visible": false
       }
     ],
     "security": {

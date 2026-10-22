@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>e-Meil</title>
+    <style>
+      /* Tokens espejo de src/styles.css (el splash vive fuera de la app). */
+      :root {
+        --accent: #6557d9;
+        --surface: #f4f5f7;
+        --paper: #ffffff;
+        --ink: #292b30;
+        --muted: #67696f;
+        --line: #e9eaed;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --surface: #141519;
+          --paper: #1f2126;
+          --ink: #e8e9ec;
+          --muted: #a0a3ab;
+          --line: #30323a;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        background: transparent;
+        font-family: 'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+        color: var(--ink);
+      }
+      /* La ventana es transparente y sin decoraciones: este div ES la tarjeta. */
+      .splash {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: var(--paper);
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.18);
+        overflow: hidden;
+        user-select: none;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        transform: translateY(-4px);
+      }
+      .brand-name {
+        font-size: 30px;
+        font-weight: 800;
+        letter-spacing: -1.1px;
+      }
+      .tagline {
+        margin: -10px 0 0;
+        font-family: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+        font-size: 12.5px;
+        color: var(--muted);
+        letter-spacing: 0.2px;
+      }
+      .spinner {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        border: 3px solid var(--line);
+        border-top-color: var(--accent);
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1.6s; } }
+      .status {
+        font-family: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: -6px;
+      }
+      .status b { color: var(--accent); font-weight: 600; }
+      .version {
+        position: absolute;
+        bottom: 14px;
+        right: 18px;
+        font-family: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+        font-size: 10px;
+        color: var(--muted);
+        opacity: 0.75;
+      }
+      /* Marca replicada del topbar: cuadrado inclinado con sobre blanco. */
+      .brand-mark {
+        width: 44px;
+        height: 40px;
+        border-radius: 12px;
+        background: var(--accent);
+        display: grid;
+        place-items: center;
+        transform: rotate(-5deg);
+        flex: none;
+      }
+      .brand-mark svg { display: block; transform: rotate(5deg); }
+    </style>
+  </head>
+  <body>
+    <div class="splash" role="img" aria-label="Iniciando e-Meil">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="24" height="20" viewBox="0 0 24 20" fill="none">
+            <path d="M3 5.5 12 12l9-6.5" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M3.8 6.5V17h16.4V6.5" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.0"/>
+          </svg>
+        </div>
+        <span class="brand-name">e-meil</span>
+      </div>
+      <p class="tagline">Tu correo, a tu manera</p>
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="status">Iniciando <b>e-Meil</b>…</p>
+      <span class="version">v0.1.0</span>
+    </div>
+  </body>
+</html>

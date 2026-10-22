@@ -13,6 +13,7 @@ Conecta cuentas **Microsoft 365 (Graph)**, **IMAP** y **POP3** a través de adap
 - **Multicuenta**: asistente para añadir cuentas (Microsoft 365, IMAP con TLS directo o STARTTLS, POP3); sin datos demo, la selección de cuenta activa persiste en localStorage y gobierna bandeja, sincronización, acciones y envío.
 - **Corre, calendario y contactos**: bandeja con búsqueda por texto, filtros ("No leídos", "Con adjuntos"), selección múltiple con acciones en lote; vistas de calendario (mes/semana/día) y contactos con formularios.
 - **Temas de color y modo oscuro**: 5 acentos (Lavanda, Océano, Bosque, Atardecer, Grafito) guardados por dispositivo, más **modo oscuro real** con superficies, textos y bordes tokenizados, conmutable desde el menú de temas, persistido en localStorage y con detección automática de `prefers-color-scheme`.
+- **Splash de arranque**: ventana `splashscreen` transparente (marca + spinner + estado) visible al instante mientras la ventana `main` permanece oculta; se revela al terminar de montar el frontend con un mínimo de presencia de 900 ms, y el splash respeta el modo oscuro del sistema sin dependencias externas.
 
 ## Requisitos
 
