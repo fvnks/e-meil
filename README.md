@@ -118,7 +118,7 @@ Modal accesible reutilizable (`src/lib/Modal.svelte`), usado por los formularios
 - POP3 es por diseño un protocolo de bandeja única sin carpetas, flags ni archivo: "leído"/"favorito" son estado local y las acciones de archivar/mover no aplican.
 - El flujo OAuth de Microsoft abre un navegador externo con un callback local; requiere Client ID propio. La devolución de tokens se reintenta automáticamente ante errores de red hasta agotar el plazo.
 - Los flujos de red (IMAP/POP3/SMTP/STARTTLS/OAuth) están verificados por tests unitarios de protocolo y compilación, pero aún falta una pasada end-to-end con cuentas reales (`pnpm tauri dev`).
-- Los textos de la UI están en español. La infraestructura de internacionalización existe (`src/lib/i18n.ts`: diccionario por locale, `t()` con interpolación, locale persistido) y ya cubre el shell de la app (rail, topbar, barra lateral, filtros, menú contextual); la extracción del resto de cadenas es trabajo incremental documentado en el propio módulo.
+- Los textos de la UI están en español. La infraestructura de internacionalización existe (`src/lib/i18n.ts`: diccionario por locale, `t()` con interpolación, locale persistido) y cubre **~120 cadenas**: shell completo (rail, topbar, barra lateral, filtros, menú contextual), panel de lectura, asistente de cuentas, formulario de evento, contactos y redactor. El resto (mensajes de estado en la lógica, nombres de carpetas demo y datos de los correos de ejemplo) es trabajo incremental documentado en el propio módulo.
 - Bordes decorativos y separadores claros no alcanzan 3:1 (no aplican como indicadores únicos de estado; pendiente de revisión fina WCAG 1.4.11).
 
 ## Estado del proyecto
