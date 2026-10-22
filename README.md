@@ -7,9 +7,9 @@ Conecta cuentas **Microsoft 365 (Graph)**, **IMAP** y **POP3** a través de adap
 ## Características
 
 - **Microsoft Graph**: OAuth 2.0 con PKCE (Client ID configurable), perfil `/me`, listado y envío de mensajes; access/refresh token persistidos en el keyring nativo. El flujo abre el navegador externo y un callback local (`127.0.0.1:43821`) recibe el código; el frontend sondea el estado cada 2 s hasta 5 minutos (el intento más reciente cancela a los anteriores) y el canje de tokens se ejecuta fuera del hilo principal para no congelar la interfaz.
-- **IMAP**: TLS directo (puerto 993), prueba de conexión, listado de carpetas y sincronización bajo demanda (hasta 30 mensajes por bandeja). Detección automática de `\Sent`, `\Archive` y `\Drafts` con etiquetas de uso especial. Lectura de mensajes con Base64 decodificado y HTML sanado; descarga de adjuntos con aviso de archivos peligrosos.
-- **POP3**: TLS directo (puerto 995), `UIDL`/`LIST`/`RETR`/`QUIT`, dot-stuffing y decodificación RFC 2047 (base64 y quoted-printable). Sincronización completa y envío pendientes.
-- **SMTP**: envío TLS real (`lettre`), adjuntos hasta 25 MB, copia automática a la carpeta de enviados IMAP; Graph guarda en Sent por sí mismo.
+- **IMAP**: TLS directo (993) **o STARTTLS (143)**, prueba de conexión, listado de carpetas y sincronización bajo demanda (hasta 30 mensajes por bandeja). Detección automática de `\Sent`, `\Archive` y `\Drafts` con etiquetas de uso especial. Lectura de mensajes con Base64 decodificado y HTML sanado; descarga de adjuntos con aviso de archivos peligrosos.
+- **POP3**: TLS directo (995) **o STARTTLS/STLS (110)**, prueba de conexión y **sincronización completa**: listado con asunto/remitente/fecha reales (vía `TOP`), lectura resuelviendo UIDL→número (los UIDL alfanuméricos de servidores reales funcionan), eliminación en servidor (`DELE` + `QUIT` confirmado), acciones en lote de borrado y envío por SMTP como cualquier cuenta. Leído/favorito son locales: el protocolo no tiene carpetas, flags ni archivo.
+- **SMTP**: envío real con TLS directo (465) **o STARTTLS (587)**, adjuntos hasta 25 MB, copia automática a la carpeta de enviados IMAP cuando existe; Graph guarda en Sent por sí mismo.
 - **Multicuenta**: selección de cuenta activa desde la barra lateral con persistencia en localStorage; la cuenta gobierna bandeja, sincronización, acciones y envío.
 - **Corre, calendario y contactos**: bandeja con búsqueda por texto, filtros ("No leídos", "Con adjuntos"), selección múltiple con acciones en lote; vistas de calendario (mes/semana/día) y contactos con formularios.
 - **Temas de color y modo oscuro**: 5 acentos (Lavanda, Océano, Bosque, Atardecer, Grafito) guardados por dispositivo, más **modo oscuro real** con superficies, textos y bordes tokenizados, conmutable desde el menú de temas, persistido en localStorage y con detección automática de `prefers-color-scheme`.
@@ -115,9 +115,9 @@ Modal accesible reutilizable (`src/lib/Modal.svelte`), usado por los formularios
 
 ## Limitaciones conocidas
 
-- IMAP usa TLS directo (puerto 993); **STARTTLS no está implementado**.
-- POP3: sincronización completa y envío pendientes (solo listar/leer/probar conexión).
+- POP3 es por diseño un protocolo de bandeja única sin carpetas, flags ni archivo: "leído"/"favorito" son estado local y las acciones de archivar/mover no aplican.
 - El flujo OAuth de Microsoft abre un navegador externo con un callback local; requiere Client ID propio. La devolución de tokens se reintenta automáticamente ante errores de red hasta agotar el plazo.
+- Los flujos de red (IMAP/POP3/SMTP/STARTTLS/OAuth) están verificados por tests unitarios de protocolo y compilación, pero aún falta una pasada end-to-end con cuentas reales (`pnpm tauri dev`).
 - Los textos de la UI están en español. La infraestructura de internacionalización existe (`src/lib/i18n.ts`: diccionario por locale, `t()` con interpolación, locale persistido) y ya cubre el shell de la app (rail, topbar, barra lateral, filtros, menú contextual); la extracción del resto de cadenas es trabajo incremental documentado en el propio módulo.
 - Bordes decorativos y separadores claros no alcanzan 3:1 (no aplican como indicadores únicos de estado; pendiente de revisión fina WCAG 1.4.11).
 

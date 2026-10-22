@@ -80,37 +80,58 @@ fn validate_host(host: &str) -> Result<&str, String> {
 
 fn validate_inputs(_host: &str, port: u16, security: &str, username: &str) -> Result<(), String> {
     if port == 0 { return Err("El puerto POP3 no es válido".into()); }
-    if security != "tls" { return Err("Solo se permite POP3 con TLS directo (normalmente puerto 995)".into()); }
+    if security != "tls" && security != "starttls" { return Err("Seguridad POP3 no soportada: usa TLS directo (995) o STARTTLS (110).".into()); }
     if username.trim().is_empty() { return Err("El usuario POP3 no puede estar vacío".into()); }
     Ok(())
 }
 
-fn connect_pop3(host: &str, port: u16, username: &str, password: &str) -> Result<BufReader<native_tls::TlsStream<std::net::TcpStream>>, String> {
+fn connect_pop3(host: &str, port: u16, username: &str, password: &str, security: &str) -> Result<BufReader<native_tls::TlsStream<std::net::TcpStream>>, String> {
     let tls = TlsConnector::builder().build().map_err(|e| format!("No se pudo preparar TLS: {e}"))?;
     let addr = (host, port).to_socket_addrs().map_err(|e| format!("No se pudo resolver el host: {e}"))?.next().ok_or("No se pudo resolver el host")?;
     let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10)).map_err(|e| format!("No se pudo conectar al servidor POP3: {e}"))?;
     stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
     stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
-    let tls_stream = tls.connect(host, stream).map_err(|e| format!("Error en handshake TLS: {e}"))?;
-    
+    // TLS directo (995) o negociación STLS sobre conexión en claro (110, RFC 2595).
+    let tls_stream = if security == "starttls" {
+        let mut plain = BufReader::new(stream);
+        let mut line = String::new();
+        plain.read_line(&mut line).map_err(|e| format!("No se pudo leer saludo POP3: {e}"))?;
+        if !line.starts_with("+OK") {
+            return Err(format!("Servidor POP3 rechazó la conexión: {line}"));
+        }
+        write!(&mut *plain.get_mut(), "STLS\r\n").map_err(|e| format!("No se pudo enviar STLS: {e}"))?;
+        plain.get_mut().flush().map_err(|e| format!("No se pudo hacer flush: {e}"))?;
+        line.clear();
+        plain.read_line(&mut line).map_err(|e| format!("No se pudo leer respuesta STLS: {e}"))?;
+        if !line.starts_with("+OK") {
+            return Err(format!("Servidor POP3 rechazó STLS: {line}"));
+        }
+        let raw = plain.into_inner();
+        tls.connect(host, raw).map_err(|e| format!("Error en handshake TLS tras STLS: {e}"))?
+    } else {
+        tls.connect(host, stream).map_err(|e| format!("Error en handshake TLS: {e}"))?
+    };
+
     let mut reader = BufReader::new(tls_stream);
-    
-    // Read greeting
-    let mut line = String::new();
-    reader.read_line(&mut line).map_err(|e| format!("No se pudo leer saludo POP3: {e}"))?;
-    if !line.starts_with("+OK") {
-        return Err(format!("Servidor POP3 rechazó la conexión: {line}"));
+
+    // Tras STLS el servidor no repite el saludo; solo se lee en TLS directo.
+    if security != "starttls" {
+        let mut line = String::new();
+        reader.read_line(&mut line).map_err(|e| format!("No se pudo leer saludo POP3: {e}"))?;
+        if !line.starts_with("+OK") {
+            return Err(format!("Servidor POP3 rechazó la conexión: {line}"));
+        }
     }
-    
+
     // USER
     write!(&mut *reader.get_mut(), "USER {}\r\n", username.trim()).map_err(|e| format!("No se pudo enviar USER: {e}"))?;
     reader.get_mut().flush().map_err(|e| format!("No se pudo hacer flush: {e}"))?;
-    line.clear();
+    let mut line = String::new();
     reader.read_line(&mut line).map_err(|e| format!("No se pudo leer respuesta USER: {e}"))?;
     if !line.starts_with("+OK") {
         return Err(format!("Usuario rechazado: {line}"));
     }
-    
+
     // PASS
     write!(&mut *reader.get_mut(), "PASS {}\r\n", password).map_err(|e| format!("No se pudo enviar PASS: {e}"))?;
     reader.get_mut().flush().map_err(|e| format!("No se pudo hacer flush: {e}"))?;
@@ -119,7 +140,7 @@ fn connect_pop3(host: &str, port: u16, username: &str, password: &str) -> Result
     if !line.starts_with("+OK") {
         return Err(format!("Contraseña rechazada: {line}"));
     }
-    
+
     Ok(reader)
 }
 
@@ -150,6 +171,58 @@ fn send_command<R: Read + Write>(reader: &mut BufReader<R>, command: &str) -> Re
         return Err(format!("El servidor POP3 rechazó {command}: {}", status.trim()));
     }
     read_response_lines(reader)
+}
+
+/// Envía un comando cuya respuesta es una única línea (DELE, QUIT, NOOP…).
+fn send_simple_command<R: Read + Write>(reader: &mut BufReader<R>, command: &str) -> Result<(), String> {
+    write!(&mut *reader.get_mut(), "{command}\r\n").map_err(|e| format!("No se pudo enviar {command}: {e}"))?;
+    reader.get_mut().flush().map_err(|e| format!("No se pudo hacer flush: {e}"))?;
+    let status = read_line(reader)?;
+    if !status.starts_with("+OK") {
+        return Err(format!("El servidor POP3 rechazó {command}: {}", status.trim()));
+    }
+    Ok(())
+}
+
+/// Devuelve el número de mensaje asociado a un UIDL dentro de la respuesta UIDL.
+fn uidl_number(uidl_lines: &[String], target_uidl: &str) -> Option<u32> {
+    for line in uidl_lines {
+        let mut parts = line.split_whitespace();
+        if let (Some(number), Some(uidl)) = (parts.next(), parts.next()) {
+            if uidl == target_uidl {
+                if let Ok(index) = number.parse::<u32>() {
+                    return Some(index);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resuelve el número de mensaje actual de un UIDL consultando el servidor.
+/// POP3 renumera los mensajes en cada sesión; el UIDL es el identificador estable.
+fn resolve_message_number<R: Read + Write>(reader: &mut BufReader<R>, target_uidl: &str) -> Result<u32, String> {
+    let lines = send_command(reader, "UIDL")?;
+    uidl_number(&lines, target_uidl).ok_or_else(|| "El mensaje ya no está disponible en el servidor.".to_string())
+}
+
+/// Extrae asunto, remitente y fecha de un bloque de cabeceras (p. ej. TOP n 0).
+fn parse_headers(raw_lines: &[String]) -> (String, Option<String>, Option<String>) {
+    let mut subject = String::new();
+    let mut from = String::new();
+    let mut date: Option<String> = None;
+    for line in raw_lines {
+        if line.trim().is_empty() { break; }
+        if let Some((key, value)) = line.split_once(':') {
+            match key.trim().to_ascii_lowercase().as_str() {
+                "subject" => subject = decode_rfc2047(value.trim()),
+                "from" => from = decode_rfc2047(value.trim()),
+                "date" => date = Some(value.trim().to_string()),
+                _ => {}
+            }
+        }
+    }
+    (subject, if from.is_empty() { None } else { Some(from) }, date)
 }
 
 /// Decodifica cabeceras MIME codificadas (RFC 2047) en sus variantes base64 y quoted-printable.
@@ -281,9 +354,10 @@ fn parse_message_content(uidl: &str, raw_lines: &[String]) -> Pop3MessageContent
 pub async fn test_pop3_connection(input: Pop3TestInput) -> Result<Pop3ConnectionResult, String> {
     let host = validate_host(&input.host)?;
     validate_inputs(host, input.port, &input.security, &input.username)?;
-    
+
     with_credential(&input.account_id, |password| {
-        let _reader = connect_pop3(host, input.port, input.username.trim(), password)?;
+        let mut reader = connect_pop3(host, input.port, input.username.trim(), password, &input.security)?;
+        let _ = send_simple_command(&mut reader, "QUIT");
         Ok(Pop3ConnectionResult { ok: true, message: "Conexión POP3 correcta".into() })
     })
 }
@@ -295,13 +369,25 @@ pub fn list_pop3_messages(input: Pop3ListInput) -> Result<Vec<Pop3Message>, Stri
     let limit = input.limit.clamp(1, 100) as usize;
 
     with_credential(&input.account_id, |password| {
-        let mut reader = connect_pop3(host, input.port, input.username.trim(), password)?;
+        let mut reader = connect_pop3(host, input.port, input.username.trim(), password, &input.security)?;
 
         let uidl_lines = send_command(&mut reader, "UIDL")?;
         let list_lines = send_command(&mut reader, "LIST")?;
-        let _ = send_command(&mut reader, "QUIT");
+        let mut messages = parse_message_list(&list_lines, &uidl_lines);
 
-        let messages = parse_message_list(&list_lines, &uidl_lines);
+        // Enriquece con cabeceras reales vía TOP n 0 (mejor esfuerzo: si el
+        // servidor no soporta TOP se mantienen los marcadores).
+        for message in messages.iter_mut().take(limit) {
+            let Some(number) = uidl_number(&uidl_lines, &message.uidl) else { continue };
+            if let Ok(header_lines) = send_command(&mut reader, &format!("TOP {number} 0")) {
+                let (subject, from, date) = parse_headers(&header_lines);
+                if !subject.is_empty() { message.subject = subject.clone(); message.preview = subject; }
+                if let Some(from) = from { message.from = from; }
+                if let Some(date) = date { message.received_at = Some(date); }
+            }
+        }
+        let _ = send_simple_command(&mut reader, "QUIT");
+
         Ok(messages.into_iter().take(limit).collect())
     })
 }
@@ -310,17 +396,50 @@ pub fn list_pop3_messages(input: Pop3ListInput) -> Result<Vec<Pop3Message>, Stri
 pub fn read_pop3_message(input: Pop3ReadInput) -> Result<Pop3MessageContent, String> {
     let host = validate_host(&input.host)?;
     validate_inputs(host, input.port, &input.security, &input.username)?;
-    
+
     let uidl = input.uidl.trim();
-    if uidl.is_empty() || !uidl.chars().all(|c| c.is_ascii_digit()) {
+    if uidl.is_empty() || uidl.len() > 190 || uidl.chars().any(char::is_control) {
         return Err("El identificador de mensaje POP3 no es válido".into());
     }
 
     with_credential(&input.account_id, |password| {
-        let mut reader = connect_pop3(host, input.port, input.username.trim(), password)?;
-        let raw = send_command(&mut reader, &format!("RETR {uidl}"))?;
-        let _ = send_command(&mut reader, "QUIT");
+        let mut reader = connect_pop3(host, input.port, input.username.trim(), password, &input.security)?;
+        // POP3 renumera mensajes por sesión: se resuelve el número actual del UIDL.
+        let number = resolve_message_number(&mut reader, uidl)?;
+        let raw = send_command(&mut reader, &format!("RETR {number}"))?;
+        let _ = send_simple_command(&mut reader, "QUIT");
         Ok(parse_message_content(uidl, &raw))
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pop3DeleteInput {
+    pub account_id: String,
+    pub host: String,
+    pub port: u16,
+    pub security: String,
+    pub username: String,
+    pub uidl: String,
+}
+
+#[tauri::command]
+pub fn delete_pop3_message(input: Pop3DeleteInput) -> Result<(), String> {
+    let host = validate_host(&input.host)?;
+    validate_inputs(host, input.port, &input.security, &input.username)?;
+
+    let uidl = input.uidl.trim();
+    if uidl.is_empty() || uidl.len() > 190 || uidl.chars().any(char::is_control) {
+        return Err("El identificador de mensaje POP3 no es válido".into());
+    }
+
+    with_credential(&input.account_id, |password| {
+        let mut reader = connect_pop3(host, input.port, input.username.trim(), password, &input.security)?;
+        let number = resolve_message_number(&mut reader, uidl)?;
+        // DELE queda pendiente hasta QUIT, que confirma la eliminación.
+        send_simple_command(&mut reader, &format!("DELE {number}"))?;
+        send_simple_command(&mut reader, "QUIT")?;
+        Ok(())
     })
 }
 #[cfg(test)]
@@ -346,6 +465,44 @@ mod tests {
         let messages = parse_message_list(&list, &uidl);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].uidl, "xyz");
+    }
+
+    #[test]
+    fn test_uidl_number_resuelve_numero_por_uidl() {
+        let lines = vec!["1 abc123".to_string(), "2 def456".to_string(), "3 xyz".to_string()];
+        assert_eq!(uidl_number(&lines, "def456"), Some(2));
+        assert_eq!(uidl_number(&lines, "xyz"), Some(3));
+        assert_eq!(uidl_number(&lines, "no-existe"), None);
+    }
+
+    #[test]
+    fn test_uidl_number_ignora_lineas_malformadas() {
+        let lines = vec!["+OK".to_string(), "basura".to_string(), "7 ok-id".to_string()];
+        assert_eq!(uidl_number(&lines, "ok-id"), Some(7));
+        assert_eq!(uidl_number(&lines, "basura"), None);
+    }
+
+    #[test]
+    fn test_parse_headers_extrae_cabeceras_principales() {
+        let raw = vec![
+            "Subject: =?UTF-8?B?SG9sYQ==?=".to_string(),
+            "From: Ana <ana@ejemplo.com>".to_string(),
+            "Date: Wed, 21 Oct 2026 10:00:00 -0300".to_string(),
+            String::new(),
+            "cuerpo ignorado".to_string(),
+        ];
+        let (subject, from, date) = parse_headers(&raw);
+        assert_eq!(subject, "Hola");
+        assert_eq!(from.as_deref(), Some("Ana <ana@ejemplo.com>"));
+        assert_eq!(date.as_deref(), Some("Wed, 21 Oct 2026 10:00:00 -0300"));
+    }
+
+    #[test]
+    fn test_parse_headers_sin_cabeceras() {
+        let (subject, from, date) = parse_headers(&[]);
+        assert!(subject.is_empty());
+        assert!(from.is_none());
+        assert!(date.is_none());
     }
 
     #[test]

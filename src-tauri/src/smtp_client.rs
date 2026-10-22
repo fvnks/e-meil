@@ -71,7 +71,7 @@ fn parse_mailboxes(values: &[String]) -> Result<Vec<Mailbox>, String> {
 #[tauri::command]
 pub fn send_smtp_mail(input: SendMailInput) -> Result<SendSmtpResult, String> {
     let host = input.host.trim(); if host.is_empty() || input.port == 0 { return Err("El servidor SMTP no es válido".into()); }
-    if input.security != "tls" { return Err("La primera versión de envío requiere TLS directo".into()); }
+    if input.security != "tls" && input.security != "starttls" { return Err("Seguridad SMTP no soportada: usa TLS directo (465) o STARTTLS (587).".into()); }
     let sender: Mailbox = input.username.parse().map_err(|_| "La dirección remitente no es válida".to_string())?;
     let to = parse_mailboxes(&input.to)?; let cc = parse_mailboxes(&input.cc).unwrap_or_default(); let bcc = parse_mailboxes(&input.bcc).unwrap_or_default();
     let mut builder = Message::builder().from(sender).subject(input.subject.chars().take(998).collect::<String>());
@@ -86,7 +86,13 @@ pub fn send_smtp_mail(input: SendMailInput) -> Result<SendSmtpResult, String> {
     let message = builder.multipart(multipart).map_err(|e| format!("No se pudo construir el mensaje: {e}"))?;
     with_credential(&input.account_id, |password| {
         let credentials = Credentials::new(input.username.clone(), password.to_string());
-        let transport = SmtpTransport::relay(host).map_err(|e| format!("No se pudo preparar SMTP TLS: {e}"))?.port(input.port).credentials(credentials).build();
+        // TLS directo (465, conexión implícita) o STARTTLS (587, upgrade en claro).
+        let transport = if input.security == "starttls" {
+            SmtpTransport::starttls_relay(host).map_err(|e| format!("No se pudo preparar SMTP STARTTLS: {e}"))?
+        } else {
+            SmtpTransport::relay(host).map_err(|e| format!("No se pudo preparar SMTP TLS: {e}"))?
+        };
+        let transport = transport.port(input.port).credentials(credentials).build();
         transport.send(&message).map_err(|e| format!("El servidor SMTP rechazó el mensaje: {e}"))?;
         Ok(())
     })?;
