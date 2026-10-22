@@ -1,0 +1,11 @@
+node_modules/
+dist/
+target/
+src-tauri/target/
+.pnpm-store/
+acl-recovery/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
