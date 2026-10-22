@@ -14,7 +14,7 @@ import { deletePop3Message, listPop3Messages, readPop3Message, testPop3Connectio
 import { initLocale, t } from './lib/i18n';
   import { inspectAttachment, sendSmtpMail } from './lib/smtp';
   import { archiveGraphMessage, createGraphDraft, deleteGraphMessage, listGraphMessages, markGraphMessage, sendGraphMessage } from './lib/graph';
-  import { notifyDesktop } from './lib/notifications';
+  import { notifyNewMail as notifyNewMailDesktop, type NewMailSummary } from './lib/notifications';
   import type { UnifiedMessage } from './lib/mail-repository';
   import { open } from '@tauri-apps/plugin-dialog';
   import Modal from './lib/Modal.svelte';
@@ -354,7 +354,7 @@ import { initLocale, t } from './lib/i18n';
     if (!activeAccount || activeProvider !== 'microsoft-graph') { syncMessage = 'Selecciona una cuenta Microsoft primero.'; return; }
     const account = activeAccount; const saved = await listAccounts(); const record = saved.find((item) => item.emailAddress === account.email); const clientId = record?.oauthClientId || microsoftClientId; if (!record || !clientId) { syncMessage = 'Autoriza primero una cuenta Microsoft 365.'; return; }
     activeProvider = 'microsoft-graph'; syncing = true; syncMessage = 'Consultando Microsoft Graph…';
-    try { const messages = await listGraphMessages(`microsoft:${clientId}`, clientId, 'common', 30); unifiedMessages = messages.map((message) => ({ id: message.id, accountId: record.id, provider: 'microsoft-graph', mailbox: 'INBOX', subject: message.subject, sender: message.sender, preview: message.preview, receivedAt: message.receivedAt, unread: !message.isRead, starred: false, hasAttachments: message.hasAttachments })); const newCount = reportNewMessages(messages.map((message) => `graph:${message.id}`)); if (newCount > 0) notifyNewMail(newCount); syncMessage = `Microsoft Graph: ${unifiedMessages.length} mensajes.`; } catch (error) { syncMessage = String(error); } finally { syncing = false; }
+    try { const messages = await listGraphMessages(`microsoft:${clientId}`, clientId, 'common', 30); unifiedMessages = messages.map((message) => ({ id: message.id, accountId: record.id, provider: 'microsoft-graph', mailbox: 'INBOX', subject: message.subject, sender: message.sender, preview: message.preview, receivedAt: message.receivedAt, unread: !message.isRead, starred: false, hasAttachments: message.hasAttachments })); const freshOnes = reportNewMessages(messages.map((message) => ({ id: `graph:${message.id}`, author: message.sender, subject: message.subject, preview: message.preview }))); if (freshOnes.length > 0) notifyNewMail(freshOnes); syncMessage = `Microsoft Graph: ${unifiedMessages.length} mensajes.`; } catch (error) { syncMessage = String(error); } finally { syncing = false; }
   }
   async function syncImapAccount(mailbox = selectedMailbox) {
     if (!activeAccount || activeProvider !== 'imap') { syncMessage = 'Agrega una cuenta IMAP para sincronizar.'; return; }
@@ -379,8 +379,8 @@ import { initLocale, t } from './lib/i18n';
         const fresh = remoteMessages.map((message) => ({ ...message, accountId: record.id, mailbox: selectedMailbox, text: previous.get(message.uid)?.text ?? null, starred: previous.get(message.uid)?.starred ?? false, cachedAt: new Date().toISOString() }));
         syncedMessages = highestUid ? [...fresh, ...syncedMessages].slice(0, 100) : fresh;
         await upsertCachedMessages(syncedMessages);
-        const newCount = reportNewMessages(syncedMessages.map((message) => `imap:${message.uid}`));
-        if (newCount > 0) notifyNewMail(newCount);
+        const freshOnes = reportNewMessages(syncedMessages.map((message) => ({ id: `imap:${message.uid}`, author: message.from, subject: message.subject, preview: message.preview })));
+        if (freshOnes.length > 0) notifyNewMail(freshOnes);
       }
       syncMessage = `Sincronizado: ${syncedFolders.length} carpetas y ${syncedMessages.length} mensajes.`;
     } catch (error) { syncMessage = String(error); }
@@ -415,8 +415,8 @@ import { initLocale, t } from './lib/i18n';
       });
       syncedMessages = rows;
       unifiedMessages = [];
-      const newCount = reportNewMessages(rows.map((row) => `pop3:${row.pop3Uidl}`));
-      if (newCount > 0) notifyNewMail(newCount);
+      const freshOnes = reportNewMessages(rows.map((row) => ({ id: `pop3:${row.pop3Uidl}`, author: row.from, subject: row.subject, preview: row.preview })));
+      if (freshOnes.length > 0) notifyNewMail(freshOnes);
       // POP3 solo expone la bandeja: las carpetas especiales no aplican.
       syncedFolders = [{ name: 'INBOX', delimiter: null, flags: [], specialUse: 'Inbox' }];
       sentFolder = null; draftsFolder = null; archiveFolder = 'Archive';
@@ -449,15 +449,15 @@ import { initLocale, t } from './lib/i18n';
   // en foco (si el usuario está mirando la app, el banner ya lo informa).
   let knownMessageIds = new Set<string>();
   let notifyBaselineReady = false;
-  function reportNewMessages(ids: string[]): number {
-    const fresh = ids.filter((id) => !knownMessageIds.has(id));
-    for (const id of fresh) knownMessageIds.add(id);
-    if (!notifyBaselineReady) { notifyBaselineReady = true; return 0; }
-    return fresh.length;
+  function reportNewMessages(messages: NewMailSummary[]): NewMailSummary[] {
+    const fresh = messages.filter((message) => !knownMessageIds.has(message.id));
+    for (const message of fresh) knownMessageIds.add(message.id);
+    if (!notifyBaselineReady) { notifyBaselineReady = true; return []; }
+    return fresh;
   }
-  function notifyNewMail(count: number) {
+  function notifyNewMail(messages: NewMailSummary[]) {
     if (!document.hidden) return;
-    void notifyDesktop(t('notify.newMail'), t('notify.newMailBody', { count }));
+    void notifyNewMailDesktop(messages);
   }
 
   // --- Búsqueda en el servidor (IMAP SEARCH / Graph $search) -----------------

@@ -91,9 +91,10 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'list.emptyNoMessages': 'Sin mensajes todavía. Sincroniza tu cuenta o añade una para empezar.',
     'batch.archive': 'Archivar',
     'batch.delete': 'Eliminar',
-    // Notificaciones y búsqueda
-    'notify.newMail': 'e-Meil — correo nuevo',
-    'notify.newMailBody': 'Tienes {count} mensaje(s) nuevo(s).',
+    // Notificaciones y búsqueda (toasts estilo Outlook: remitente + asunto)
+    'notify.andMore': '{author} y {count} más',
+    'notify.manyBody': '{count} mensajes nuevos',
+    'notify.noSubject': '(sin asunto)',
     'search.server': 'Buscar en el servidor',
     'search.exit': 'Volver a la bandeja',
     'search.results': 'Resultados de «{query}» en {mailbox}: {count} mensaje(s).',
