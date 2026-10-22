@@ -251,6 +251,85 @@ pub(crate) fn append_raw_to_mailbox(account_id: &str, host: &str, port: u16, sec
     })
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImapSearchInput { pub account_id: String, pub host: String, pub port: u16, pub security: String, pub username: String, pub mailbox: String, pub query: String }
+
+/// Búsqueda en el servidor (IMAP SEARCH TEXT) sobre una carpeta: devuelve los
+/// resúmenes de los mensajes que coinciden, del más nuevo al más viejo.
+#[tauri::command]
+pub fn search_imap_messages(input: ImapSearchInput) -> Result<Vec<ImapMessage>, String> {
+    let host = validate_host(&input.host)?;
+    validate_inputs(host, input.port, &input.security, &input.username)?;
+    let mailbox = input.mailbox.trim();
+    if mailbox.is_empty() { return Err("La carpeta IMAP no es válida".into()); }
+    let query = input.query.trim().replace(['"', '\r', '\n'], "");
+    if query.chars().count() < 2 { return Err("La búsqueda debe tener al menos 2 caracteres".into()); }
+
+    with_credential(&input.account_id, |password| {
+        let mut session = connect(host, input.port, input.username.trim(), password, &input.security)?;
+        session.select(mailbox).map_err(|e| format!("No se pudo abrir la carpeta IMAP: {e}"))?;
+        let uids: Vec<u32> = {
+            let found = session.uid_search(format!("TEXT \"{query}\"")).map_err(|e| format!("El servidor rechazó la búsqueda: {e}"))?;
+            let mut list: Vec<u32> = found.into_iter().collect();
+            list.sort_unstable();
+            list.reverse();
+            list
+        };
+        if uids.is_empty() {
+            session.logout().map_err(|e| format!("La sesión IMAP no pudo cerrarse limpiamente: {e}"))?;
+            return Ok(Vec::new());
+        }
+        let sequence = uids.iter().map(|uid| uid.to_string()).collect::<Vec<_>>().join(",");
+        let fetches = session.fetch(&sequence, "UID FLAGS ENVELOPE BODY.PEEK[TEXT]<0.600>").map_err(|e| format!("No se pudieron leer los mensajes: {e}"))?;
+        let mut messages = Vec::new();
+        for fetch in fetches.iter() {
+            let envelope = fetch.envelope();
+            let subject = envelope.and_then(|e| e.subject.as_ref()).map(|s| String::from_utf8_lossy(s).trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "(sin asunto)".into());
+            let from = envelope.and_then(|e| e.from.as_ref().and_then(|addresses| addresses.first())).map(|address| format_address_parts(address.name.as_deref(), address.mailbox.as_deref(), address.host.as_deref())).unwrap_or_else(|| "Remitente desconocido".into());
+            let preview = fetch.text().or_else(|| fetch.body()).map(|body| normalize_body_text(body).replace('\n', " ").chars().take(180).collect()).unwrap_or_default();
+            let seen = fetch.flags().iter().any(|flag| format!("{flag:?}") == "\\Seen");
+            messages.push(ImapMessage { uid: fetch.uid.unwrap_or_default(), subject, from, received_at: None, preview, unread: !seen, has_attachments: false });
+        }
+        session.logout().map_err(|e| format!("La sesión IMAP no pudo cerrarse limpiamente: {e}"))?;
+        Ok(messages)
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImapDraftInput { pub account_id: String, pub host: String, pub port: u16, pub security: String, pub username: String, pub mailbox: String, pub to: Vec<String>, pub cc: Vec<String>, pub bcc: Vec<String>, pub subject: String, pub html: String }
+
+/// Guarda el redactor en curso como borrador IMAP (APPEND con flag \Draft).
+#[tauri::command]
+pub fn save_imap_draft(input: ImapDraftInput) -> Result<(), String> {
+    let host = validate_host(&input.host)?;
+    validate_inputs(host, input.port, &input.security, &input.username)?;
+    let mailbox = input.mailbox.trim();
+    if mailbox.is_empty() { return Err("No se detectó la carpeta de borradores de esta cuenta".into()); }
+
+    let from: lettre::message::Mailbox = input.username.trim().parse().map_err(|_| "La dirección remitente no es válida".to_string())?;
+    let mut builder = lettre::Message::builder().from(from).subject(input.subject.chars().take(998).collect::<String>());
+    for recipient in &input.to { let mailbox_addr: lettre::message::Mailbox = recipient.trim().parse().map_err(|_| format!("Destinatario inválido: {recipient}"))?; builder = builder.to(mailbox_addr); }
+    for recipient in &input.cc { let mailbox_addr: lettre::message::Mailbox = recipient.trim().parse().map_err(|_| format!("Destinatario inválido: {recipient}"))?; builder = builder.cc(mailbox_addr); }
+    for recipient in &input.bcc { let mailbox_addr: lettre::message::Mailbox = recipient.trim().parse().map_err(|_| format!("Destinatario inválido: {recipient}"))?; builder = builder.bcc(mailbox_addr); }
+    let message = builder
+        .multipart(lettre::message::MultiPart::alternative()
+            .singlepart(lettre::message::SinglePart::builder()
+                .header(lettre::message::header::ContentType::TEXT_PLAIN)
+                .body(input.html.replace("<br>", "\n").replace("</p>", "\n\n").chars().filter(|c| !c.is_control()).collect::<String>()))
+            .singlepart(lettre::message::SinglePart::builder()
+                .header(lettre::message::header::ContentType::TEXT_HTML)
+                .body(input.html.clone())))
+        .map_err(|e| format!("No se pudo construir el borrador: {e}"))?;
+
+    with_credential(&input.account_id, |password| {
+        let mut session = connect(host, input.port, input.username.trim(), password, &input.security)?;
+        session.append_with_flags(mailbox, &message.formatted(), &[imap::types::Flag::Draft]).map_err(|e| format!("No se pudo guardar el borrador en '{mailbox}': {e}"))?;
+        session.logout().map_err(|e| format!("No se pudo cerrar la sesión IMAP: {e}"))
+    })
+}
+
 #[tauri::command]
 pub fn append_imap_sent_message(input: ImapAppendInput) -> Result<(), String> {
     append_raw_to_mailbox(&input.account_id, &input.host, input.port, &input.security, &input.username, &input.mailbox, input.raw_message.as_bytes())

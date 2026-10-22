@@ -4,7 +4,7 @@
   import type { AccountSetup, MailProvider, CalendarEvent, CalendarCalendar, Contact, AddressBook, CalendarAccount, ContactAccount, EventReminder, ContactEmail, ContactPhone, ContactAddress } from './lib/types';
   import { credentialBackendStatus, saveCredential } from './lib/credentials';
   import { listAccounts, saveAccountMetadata, saveMicrosoftAccount } from './lib/accounts';
-  import { deleteImapMessage, downloadImapAttachment, listImapFolders, listImapMessages, listImapMessagesIncremental, moveImapMessage, readImapMessage, setImapSeen, testImapConnection } from './lib/imap';
+  import { deleteImapMessage, downloadImapAttachment, listImapFolders, listImapMessages, listImapMessagesIncremental, moveImapMessage, readImapMessage, saveImapDraft, searchImapMessages, setImapSeen, testImapConnection } from './lib/imap';
   import type { ImapMessageContent } from './lib/imap';
   import type { AccountRecord } from './lib/accounts';
 import { deletePop3Message, listPop3Messages, readPop3Message, testPop3Connection } from './lib/pop3';
@@ -13,7 +13,8 @@ import { deletePop3Message, listPop3Messages, readPop3Message, testPop3Connectio
   import { startMicrosoftOAuth, waitForMicrosoftAuthorization } from './lib/oauth';
 import { initLocale, t } from './lib/i18n';
   import { inspectAttachment, sendSmtpMail } from './lib/smtp';
-  import { archiveGraphMessage, deleteGraphMessage, listGraphMessages, markGraphMessage, sendGraphMessage } from './lib/graph';
+  import { archiveGraphMessage, createGraphDraft, deleteGraphMessage, listGraphMessages, markGraphMessage, sendGraphMessage } from './lib/graph';
+  import { notifyDesktop } from './lib/notifications';
   import type { UnifiedMessage } from './lib/mail-repository';
   import { open } from '@tauri-apps/plugin-dialog';
   import Modal from './lib/Modal.svelte';
@@ -51,7 +52,30 @@ import { initLocale, t } from './lib/i18n';
   async function addAttachments() { const selected = await open({ multiple: true, directory: false, filters: [{ name: 'Archivos', extensions: ['*'] }] }); const paths = selected ? (Array.isArray(selected) ? selected : [selected]) : []; const inspected = []; for (const path of paths) { try { const info = await inspectAttachment(path); inspected.push({ name: info.name, size: info.size, type: info.contentType, path }); } catch (error) { composeNotice = String(error); } } composeAttachments = [...composeAttachments, ...inspected].slice(0, 10); }
   function removeAttachment(name: string) { composeAttachments = composeAttachments.filter((item) => item.name !== name); }
   function formatBytes(bytes: number) { return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
-  function saveDraft() { localStorage.setItem('emeil-draft', JSON.stringify({ to: composeTo, cc: composeCc, bcc: composeBcc, subject: composeSubject, html: composeHtml, attachments: composeAttachments })); composeNotice = 'Borrador guardado en este dispositivo.'; }
+  async function saveDraft() {
+    const localDraft = { to: composeTo, cc: composeCc, bcc: composeBcc, subject: composeSubject, html: composeHtml, attachments: composeAttachments };
+    localStorage.setItem('emeil-draft', JSON.stringify(localDraft));
+    try {
+      if (!activeAccount) { composeNotice = 'Borrador guardado en este dispositivo.'; return; }
+      const saved = await listAccounts(); const record = saved.find((item) => item.emailAddress === activeAccount!.email);
+      if (!record) { composeNotice = 'Borrador guardado en este dispositivo.'; return; }
+      const to = composeTo.split(/[;,]/).map((item) => item.trim()).filter(Boolean);
+      const cc = composeCc.split(/[;,]/).map((item) => item.trim()).filter(Boolean);
+      const bcc = composeBcc.split(/[;,]/).map((item) => item.trim()).filter(Boolean);
+      const html = cleanComposeHtml(composeHtml);
+      if (activeProvider === 'microsoft-graph') {
+        const clientKey = record.oauthClientId || microsoftClientId;
+        if (!clientKey) { composeNotice = 'Borrador guardado en este dispositivo (falta Client ID).'; return; }
+        await createGraphDraft({ accountId: `microsoft:${clientKey}`, to, cc, bcc, subject: composeSubject, html, attachments: [] });
+        composeNotice = 'Borrador guardado en Borradores (Microsoft 365).';
+      } else if (activeProvider === 'imap' && draftsFolder) {
+        await saveImapDraft({ accountId: record.id, host: record.incomingHost, port: record.incomingPort, security: record.incomingSecurity, username: record.incomingUsername || record.emailAddress, mailbox: draftsFolder, to, cc, bcc, subject: composeSubject, html });
+        composeNotice = `Borrador guardado en «${draftsFolder}».`;
+      } else {
+        composeNotice = 'Borrador guardado en este dispositivo.';
+      }
+    } catch (error) { composeNotice = `Borrador local guardado, pero no en el servidor: ${String(error)}`; }
+  }
 
   let contextMenu = $state<{ x: number; y: number; kind: 'message' | 'empty'; uid?: number } | null>(null);
   async function openContextMenu(event: MouseEvent, uid?: number) {
@@ -217,6 +241,8 @@ import { initLocale, t } from './lib/i18n';
     localStorage.setItem('emeil-active-account', account.email);
     activeProvider = account.provider === 'MICROSOFT-GRAPH' ? 'microsoft-graph' : account.provider === 'POP3' ? 'pop3' : 'imap';
     activeRealMessage = null; activeGraphMessage = null; syncedMessages = []; unifiedMessages = []; selectedMailbox = 'INBOX'; currentFolder = 'Bandeja de entrada'; sentFolder = null; draftsFolder = null;
+    // Nueva cuenta: la primera sincronización marca la línea base de notificaciones.
+    knownMessageIds = new Set(); notifyBaselineReady = false; serverSearchActive = false;
     if (account.provider === 'MICROSOFT-GRAPH') syncGraphAccount(); else if (account.provider === 'POP3') syncPop3Account(); else syncImapAccount();
   }
   function chooseProvider(provider: MailProvider) { setup = initialSetup(provider); setupStep = 'details'; setupError = ''; setupInfo = ''; }
@@ -328,7 +354,7 @@ import { initLocale, t } from './lib/i18n';
     if (!activeAccount || activeProvider !== 'microsoft-graph') { syncMessage = 'Selecciona una cuenta Microsoft primero.'; return; }
     const account = activeAccount; const saved = await listAccounts(); const record = saved.find((item) => item.emailAddress === account.email); const clientId = record?.oauthClientId || microsoftClientId; if (!record || !clientId) { syncMessage = 'Autoriza primero una cuenta Microsoft 365.'; return; }
     activeProvider = 'microsoft-graph'; syncing = true; syncMessage = 'Consultando Microsoft Graph…';
-    try { const messages = await listGraphMessages(`microsoft:${clientId}`, clientId, 'common', 30); unifiedMessages = messages.map((message) => ({ id: message.id, accountId: record.id, provider: 'microsoft-graph', mailbox: 'INBOX', subject: message.subject, sender: message.sender, preview: message.preview, receivedAt: message.receivedAt, unread: !message.isRead, starred: false, hasAttachments: message.hasAttachments })); syncMessage = `Microsoft Graph: ${unifiedMessages.length} mensajes.`; } catch (error) { syncMessage = String(error); } finally { syncing = false; }
+    try { const messages = await listGraphMessages(`microsoft:${clientId}`, clientId, 'common', 30); unifiedMessages = messages.map((message) => ({ id: message.id, accountId: record.id, provider: 'microsoft-graph', mailbox: 'INBOX', subject: message.subject, sender: message.sender, preview: message.preview, receivedAt: message.receivedAt, unread: !message.isRead, starred: false, hasAttachments: message.hasAttachments })); const newCount = reportNewMessages(messages.map((message) => `graph:${message.id}`)); if (newCount > 0) notifyNewMail(newCount); syncMessage = `Microsoft Graph: ${unifiedMessages.length} mensajes.`; } catch (error) { syncMessage = String(error); } finally { syncing = false; }
   }
   async function syncImapAccount(mailbox = selectedMailbox) {
     if (!activeAccount || activeProvider !== 'imap') { syncMessage = 'Agrega una cuenta IMAP para sincronizar.'; return; }
@@ -353,6 +379,8 @@ import { initLocale, t } from './lib/i18n';
         const fresh = remoteMessages.map((message) => ({ ...message, accountId: record.id, mailbox: selectedMailbox, text: previous.get(message.uid)?.text ?? null, starred: previous.get(message.uid)?.starred ?? false, cachedAt: new Date().toISOString() }));
         syncedMessages = highestUid ? [...fresh, ...syncedMessages].slice(0, 100) : fresh;
         await upsertCachedMessages(syncedMessages);
+        const newCount = reportNewMessages(syncedMessages.map((message) => `imap:${message.uid}`));
+        if (newCount > 0) notifyNewMail(newCount);
       }
       syncMessage = `Sincronizado: ${syncedFolders.length} carpetas y ${syncedMessages.length} mensajes.`;
     } catch (error) { syncMessage = String(error); }
@@ -387,6 +415,8 @@ import { initLocale, t } from './lib/i18n';
       });
       syncedMessages = rows;
       unifiedMessages = [];
+      const newCount = reportNewMessages(rows.map((row) => `pop3:${row.pop3Uidl}`));
+      if (newCount > 0) notifyNewMail(newCount);
       // POP3 solo expone la bandeja: las carpetas especiales no aplican.
       syncedFolders = [{ name: 'INBOX', delimiter: null, flags: [], specialUse: 'Inbox' }];
       sentFolder = null; draftsFolder = null; archiveFolder = 'Archive';
@@ -395,6 +425,71 @@ import { initLocale, t } from './lib/i18n';
     } catch (error) { syncMessage = String(error); }
     finally { syncing = false; }
   }
+  // --- Sincronización automática y notificaciones ---------------------------
+  // Cada N minutos (localStorage "emeil-sync-interval-min", por defecto 5) y
+  // al enfocar la ventana se sincroniza la cuenta activa si no hay una en curso.
+  let lastAutoSyncAt = 0;
+  function syncActiveAccount() {
+    if (!activeAccount) return;
+    if (activeProvider === 'microsoft-graph') syncGraphAccount();
+    else if (activeProvider === 'pop3') syncPop3Account();
+    else syncImapAccount();
+  }
+  function maybeAutoSync() {
+    if (!activeAccount || syncing) return;
+    const intervalMin = Math.max(1, parseInt(localStorage.getItem('emeil-sync-interval-min') || '5', 10) || 5);
+    if (Date.now() - lastAutoSyncAt < intervalMin * 60_000) return;
+    lastAutoSyncAt = Date.now();
+    syncActiveAccount();
+  }
+  $effect(() => { const id = window.setInterval(maybeAutoSync, 30_000); return () => window.clearInterval(id); });
+
+  // Detección de correo nuevo: la primera sincronización de cada cuenta es la
+  // línea base; a partir de ahí, los ids nuevos notifican si la app no está
+  // en foco (si el usuario está mirando la app, el banner ya lo informa).
+  let knownMessageIds = new Set<string>();
+  let notifyBaselineReady = false;
+  function reportNewMessages(ids: string[]): number {
+    const fresh = ids.filter((id) => !knownMessageIds.has(id));
+    for (const id of fresh) knownMessageIds.add(id);
+    if (!notifyBaselineReady) { notifyBaselineReady = true; return 0; }
+    return fresh.length;
+  }
+  function notifyNewMail(count: number) {
+    if (!document.hidden) return;
+    void notifyDesktop(t('notify.newMail'), t('notify.newMailBody', { count }));
+  }
+
+  // --- Búsqueda en el servidor (IMAP SEARCH / Graph $search) -----------------
+  let serverSearchActive = $state(false);
+  let serverSearching = $state(false);
+  async function runServerSearch() {
+    const query = search.trim();
+    if (query.length < 2 || !activeAccount || serverSearching) return;
+    serverSearching = true;
+    try {
+      const saved = await listAccounts(); const record = saved.find((item) => item.emailAddress === activeAccount!.email);
+      if (!record) { syncMessage = 'No se encontró la configuración de la cuenta.'; return; }
+      if (activeProvider === 'imap') {
+        const results = await searchImapMessages({ accountId: record.id, host: record.incomingHost, port: record.incomingPort, security: record.incomingSecurity, username: record.incomingUsername, mailbox: selectedMailbox, query });
+        serverSearchActive = true;
+        // Los resultados reemplazan la vista (sin tocar la caché local).
+        syncedMessages = results.map((message) => ({ ...message, accountId: record.id, mailbox: selectedMailbox, text: null, starred: false, cachedAt: new Date().toISOString() }));
+        syncMessage = t('search.results', { count: results.length, query, mailbox: selectedMailbox });
+      } else if (activeProvider === 'microsoft-graph') {
+        const clientKey = record.oauthClientId || microsoftClientId;
+        if (!clientKey) { syncMessage = 'Falta el Client ID de Microsoft para buscar en el servidor.'; return; }
+        const messages = await listGraphMessages(`microsoft:${clientKey}`, clientKey, 'common', 30, query);
+        unifiedMessages = messages.map((message) => ({ id: message.id, accountId: record.id, provider: 'microsoft-graph' as const, mailbox: 'INBOX', subject: message.subject, sender: message.sender, preview: message.preview, receivedAt: message.receivedAt, unread: !message.isRead, starred: false, hasAttachments: message.hasAttachments }));
+        serverSearchActive = true;
+        syncMessage = t('search.results', { count: messages.length, query, mailbox: 'Microsoft 365' });
+      } else {
+        syncMessage = 'La búsqueda en el servidor no está disponible para POP3 (protocolo de solo descarga).';
+      }
+    } catch (error) { syncMessage = String(error); }
+    finally { serverSearching = false; }
+  }
+  function exitServerSearch() { serverSearchActive = false; syncActiveAccount(); }
   function applySuggestions() {
     if (setup.provider === 'imap' || setup.provider === 'pop3') {
       const suggestion = suggestCommonServer(setup.emailAddress, setup.provider);
@@ -640,13 +735,13 @@ import { initLocale, t } from './lib/i18n';
 
 <svelte:head><title>{t('app.title')}</title></svelte:head>
 
-<svelte:window oncontextmenu={(event) => openContextMenu(event)} onclick={closeContextMenu} onkeydown={handleWindowKeydown} /><div class="app-shell theme-{theme}" class:dark={dark} class:drawer-open={drawerOpen}>
+<svelte:window oncontextmenu={(event) => openContextMenu(event)} onclick={closeContextMenu} onkeydown={handleWindowKeydown} onfocus={maybeAutoSync} /><div class="app-shell theme-{theme}" class:dark={dark} class:drawer-open={drawerOpen}>
   <a href="#main-content" class="skip-link">{t('app.skipContent')}</a>
   <a href="#sidebar" class="skip-link">{t('app.skipSidebar')}</a>
   <header class="topbar">
     <button class="menu-button" type="button" aria-label={t('topbar.menu')} aria-expanded={drawerOpen} aria-controls="sidebar" onclick={() => drawerOpen = !drawerOpen}><span class="menu-icon" aria-hidden="true"></span><span class="menu-icon" aria-hidden="true"></span><span class="menu-icon" aria-hidden="true"></span></button>
     <div class="brand"><div class="brand-mark"><span></span><span></span></div><span class="brand-name">e-meil</span></div>
-    <div class="top-search"><span class="search-icon">⌕</span><input bind:value={search} placeholder="Buscar en todos los mensajes" aria-label="Buscar mensajes"/><kbd>⌘ K</kbd></div>
+    <div class="top-search"><span class="search-icon">⌕</span><input bind:value={search} placeholder="Buscar en todos los mensajes" aria-label="Buscar mensajes"/>{#if activeAccount && search.trim().length >= 2 && (activeProvider === 'imap' || activeProvider === 'microsoft-graph') && !serverSearchActive}<button class="search-server" type="button" onclick={runServerSearch} disabled={serverSearching} aria-label={t('search.server')}>{serverSearching ? '…' : t('search.server')}</button>{/if}<kbd>⌘ K</kbd></div>
     <div class="top-actions"><button class="icon-button" use:tooltip={t('topbar.help')} aria-label={t('topbar.help')}>?</button><button class="icon-button settings" aria-label={t('topbar.theme')} use:tooltip={t('topbar.theme')} onclick={() => themeOpen = !themeOpen}>⚙</button>{#if themeOpen}<div class="theme-menu" role="dialog" aria-label="Elegir tema"><div class="theme-menu-title">{t('theme.title')}</div>{#each themes as option}<button class:theme-selected={theme === option.id} class="theme-option" onclick={() => setTheme(option.id)}><span class="theme-swatch" style={`--swatch:${option.color}`}></span><span><strong>{option.label}</strong><small>{option.description}</small></span>{#if theme === option.id}<b>✓</b>{/if}</button>{/each}<p class="theme-menu-note">{t('theme.note')}</p><button class="theme-option" role="switch" aria-checked={dark} onclick={() => setDark(!dark)}><span class="theme-swatch dark-swatch" aria-hidden="true"></span><span><strong>{t('theme.dark')}</strong><small>{dark ? t('theme.darkOn') : t('theme.darkOff')}</small></span>{#if dark}<b>✓</b>{/if}</button></div>{/if}{#if activeAccount}<button class="account" use:tooltip={activeAccount.email} onclick={() => themeOpen = false} onkeydown={(e) => { if (e.key === 'Enter') themeOpen = false; }}><div class="account-avatar">{activeAccount.email.slice(0,1).toUpperCase()}</div><div class="account-meta"><strong>{activeAccount.name}</strong><span>{activeAccount.email}</span><small>{activeAccount.provider === 'MICROSOFT-GRAPH' ? 'Microsoft 365' : activeAccount.provider === 'POP3' ? 'POP3' : 'IMAP'}</small></div></button>{/if}</div>
   </header>
   {#if drawerOpen}<div class="drawer-backdrop" role="presentation" aria-hidden="true" onclick={() => drawerOpen = false}></div>{/if}
@@ -663,7 +758,7 @@ import { initLocale, t } from './lib/i18n';
       {#if activeView === 'mail'}
       <section class="message-list">
         <div class="list-header"><div><div class="eyebrow">{todayLabel}</div><h1>{currentFolder}</h1><div class="inbox-subtitle">{t('list.subtitle')}</div></div><div class="filter-dropdown"><button class="filter-button" aria-haspopup="menu" aria-expanded={filterMenuOpen} onclick={() => filterMenuOpen = !filterMenuOpen} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); filterMenuOpen = !filterMenuOpen; } }}>☷ <span>{t('filters.trigger')}</span><span class="chevron">⌄</span></button>{#if filterMenuOpen}<div class="filter-menu" role="group" aria-label={t('filters.group')}><div class="filter-section"><label><input type="checkbox" bind:checked={filterUnread} onchange={() => filterMenuOpen = false} /> <span>No leídos</span></label></div><div class="filter-section"><label><input type="checkbox" bind:checked={filterHasAttachments} onchange={() => filterMenuOpen = false} /> <span>Con adjuntos</span></label></div>{#if filterUnread || filterHasAttachments}<button class="filter-clear" onclick={() => { filterUnread = false; filterHasAttachments = false; filterMenuOpen = false; }}>{t('filters.clear')}</button>{/if}</div>{/if}</div></div>
-        <div class="list-tools">{#if selectionMode}<div class="batch-bar"><button class="batch-btn" onclick={() => { selectedUids.clear(); selectionMode = false; }} aria-label="Cancelar selección">{t('common.cancel')}</button><span class="batch-count">{selectedUids.size} seleccionados</span><button class="batch-btn danger" onclick={() => batchAction('archive')}>{t('batch.archive')}</button><button class="batch-btn danger" onclick={() => batchAction('delete')}>{t('batch.delete')}</button></div>{:else}<button class="select-all" aria-label="Seleccionar" onclick={() => { selectionMode = true; selectedUids.clear(); visibleMails.forEach(({ mail }) => { const key = (mail as any).uid ?? (mail as any).id; selectedUids.add(key); }); }}></button><span>{t('list.select')}</span>{/if}{#if filterUnread || filterHasAttachments}<div class="active-filters" style="margin-left:auto;display:flex;gap:6px;align-items:center;font-size:10px;color:var(--muted)">{#if filterUnread}<span class="filter-pill">✉ {t('filters.unread')}</span>{/if}{#if filterHasAttachments}<span class="filter-pill">⌁ {t('filters.attachments')}</span>{/if}</div>{/if}<div class="tool-spacer"></div><span class="list-count">{selectionMode ? selectedUids.size + ' seleccionados de ' : ''}{syncedMessages.length || visibleMails.length} mensajes</span><button class="tool-icon" use:tooltip={'Ordenar'} aria-label="Ordenar">↕</button><button class="tool-icon" title={t('common.refresh')} onclick={() => activeProvider === 'microsoft-graph' ? syncGraphAccount() : activeProvider === 'pop3' ? syncPop3Account() : syncImapAccount()} disabled={syncing}>{syncing ? '…' : '⟳'}</button></div>{#if syncMessage}<div class="sync-banner">{syncMessage}</div>{/if}
+        <div class="list-tools">{#if selectionMode}<div class="batch-bar"><button class="batch-btn" onclick={() => { selectedUids.clear(); selectionMode = false; }} aria-label="Cancelar selección">{t('common.cancel')}</button><span class="batch-count">{selectedUids.size} seleccionados</span><button class="batch-btn danger" onclick={() => batchAction('archive')}>{t('batch.archive')}</button><button class="batch-btn danger" onclick={() => batchAction('delete')}>{t('batch.delete')}</button></div>{:else}<button class="select-all" aria-label="Seleccionar" onclick={() => { selectionMode = true; selectedUids.clear(); visibleMails.forEach(({ mail }) => { const key = (mail as any).uid ?? (mail as any).id; selectedUids.add(key); }); }}></button><span>{t('list.select')}</span>{/if}{#if filterUnread || filterHasAttachments}<div class="active-filters" style="margin-left:auto;display:flex;gap:6px;align-items:center;font-size:10px;color:var(--muted)">{#if filterUnread}<span class="filter-pill">✉ {t('filters.unread')}</span>{/if}{#if filterHasAttachments}<span class="filter-pill">⌁ {t('filters.attachments')}</span>{/if}</div>{/if}<div class="tool-spacer"></div><span class="list-count">{selectionMode ? selectedUids.size + ' seleccionados de ' : ''}{syncedMessages.length || visibleMails.length} mensajes</span><button class="tool-icon" use:tooltip={'Ordenar'} aria-label="Ordenar">↕</button><button class="tool-icon" title={t('common.refresh')} onclick={() => activeProvider === 'microsoft-graph' ? syncGraphAccount() : activeProvider === 'pop3' ? syncPop3Account() : syncImapAccount()} disabled={syncing}>{syncing ? '…' : '⟳'}</button></div>{#if syncMessage}<div class="sync-banner">{syncMessage}{#if serverSearchActive}<button class="search-exit" type="button" onclick={exitServerSearch}>{t('search.exit')}</button>{/if}</div>{/if}
         <div class="messages">{#if syncedMessages.length}{#each syncedMessages as mail (mail.uid)}<article class:unread={mail.unread} class="message-row" oncontextmenu={(event) => openContextMenu(event, mail.uid)}>{#if selectionMode}<input type="checkbox" class="select-checkbox" checked={selectedUids.has(mail.uid)} onchange={() => { if (selectedUids.has(mail.uid)) selectedUids.delete(mail.uid); else selectedUids.add(mail.uid); }} />{:else}<button class="message-open" onclick={() => openRealMessage(mail)} aria-label={t('reading.open')}><span class="row-check"></span></button>{/if}<button type="button" class:starred={mail.starred} class="star" aria-label={t('reading.favorite')} onclick={(event) => { event.stopPropagation(); toggleCachedState(mail, 'starred'); }}>{mail.starred ? '★' : '☆'}</button><span class="sender-avatar lavender">{messageInitials(mail.from)}</span><button class="message-open message-body-open" onclick={() => openRealMessage(mail)} aria-label={t('reading.open')}><span class="sender-avatar lavender">{messageInitials(mail.from)}</span><span class="message-content"><span class="message-top"><span class="sender">{mail.from}</span><span class="message-time">{displayTime(mail.receivedAt)}</span></span><span class="subject-line">{mail.subject}</span><span class="preview">{mail.preview || 'Sin vista previa disponible.'}</span></span></button>{#if mail.unread}<span class="unread-dot"></span>{/if}</article>{/each}{:else if visibleMails.length}{#each visibleMails as item (item.i)}<article class:unread={item.mail.unread} class="message-row">{#if selectionMode}<input type="checkbox" class="select-checkbox" checked={selectedUids.has(item.mail.uid ?? item.i)} onchange={() => { const key = item.mail.uid ?? item.i; if (selectedUids.has(key)) selectedUids.delete(key); else selectedUids.add(key); }} />{:else}<button class="message-open" aria-label="Abrir mensaje: {item.mail.subject}" onclick={() => openGraphMessage(unifiedMessages[item.i] as unknown as import('./lib/graph').GraphMessage)}><span class="row-check"></span></button>{/if}<button type="button" class:starred={item.mail.starred} class="star" aria-label={item.mail.starred ? 'Quitar de favoritos' : 'Añadir a favoritos'} onclick={(event) => { event.stopPropagation(); unifiedMessages[item.i].starred = !unifiedMessages[item.i].starred; }}>{item.mail.starred ? '★' : '☆'}</button><button class="message-open message-body-open" aria-label="Abrir mensaje: {item.mail.subject}" onclick={() => openGraphMessage(unifiedMessages[item.i] as unknown as import('./lib/graph').GraphMessage)}><span class="sender-avatar {item.mail.color}">{item.mail.initials}</span><span class="message-content"><span class="message-top"><span class="sender">{item.mail.sender}</span><span class="message-time">{item.mail.time}</span></span><span class="subject-line">{item.mail.subject}{#if item.mail.tag}<span class="tag">{item.mail.tag}</span>{/if}</span><span class="preview">{item.mail.preview}</span></span></button>{#if item.mail.unread}<span class="unread-dot"></span>{/if}</article>{/each}{:else}<div class="empty-state">{t('list.emptyNoMessages')}</div>{/if}</div>
        
      

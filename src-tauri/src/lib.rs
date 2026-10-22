@@ -15,6 +15,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(OAuthState::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             credentials::save_credential,
             credentials::delete_credential,
@@ -43,11 +44,14 @@ pub fn run() {
             pop3_client::delete_pop3_message,
             smtp_client::send_smtp_mail,
             smtp_client::inspect_attachment,
+            imap_client::search_imap_messages,
+            imap_client::save_imap_draft,
             graph::list_graph_messages,
             graph_actions::mark_graph_message,
             graph_actions::archive_graph_message,
             graph_actions::delete_graph_message,
-            graph_send::send_graph_message
+            graph_send::send_graph_message,
+            graph_send::create_graph_draft
         ])
         .run(tauri::generate_context!())
         .expect("error while running e-Meil");

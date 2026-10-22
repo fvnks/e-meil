@@ -29,3 +29,17 @@ pub fn send_graph_message(input: GraphSendInput) -> Result<(), String> {
     let body = serde_json::json!({"message":{"subject":input.subject.chars().take(998).collect::<String>(),"body":{"contentType":"HTML","content":clean_html(&input.html)},"toRecipients":to,"ccRecipients":cc,"bccRecipients":bcc,"attachments":attachments},"saveToSentItems":true});
     with_oauth_access_token(&input.account_id, |token| { let response = Client::new().post("https://graph.microsoft.com/v1.0/me/sendMail").bearer_auth(token).json(&body).send().map_err(|e| format!("No se pudo enviar por Microsoft Graph: {e}"))?; if !response.status().is_success() { return Err(format!("Microsoft Graph respondió con {}", response.status())); } Ok(()) })
 }
+
+/// Crea un borrador en la carpeta Borradores de Microsoft 365 (POST /me/messages).
+#[tauri::command]
+pub fn create_graph_draft(input: GraphSendInput) -> Result<(), String> {
+    let to = valid_addresses(&input.to)?;
+    let cc = valid_addresses(&input.cc)?;
+    let bcc = valid_addresses(&input.bcc)?;
+    let body = serde_json::json!({"subject":input.subject.chars().take(998).collect::<String>(),"body":{"contentType":"HTML","content":clean_html(&input.html)},"toRecipients":to,"ccRecipients":cc,"bccRecipients":bcc});
+    with_oauth_access_token(&input.account_id, |token| {
+        let response = Client::new().post("https://graph.microsoft.com/v1.0/me/messages").bearer_auth(token).json(&body).send().map_err(|e| format!("No se pudo crear el borrador Graph: {e}"))?;
+        if !response.status().is_success() { return Err(format!("Microsoft Graph respondió con {}", response.status())); }
+        Ok(())
+    })
+}

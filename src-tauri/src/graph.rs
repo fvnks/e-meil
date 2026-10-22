@@ -25,11 +25,24 @@ fn refresh_token(account_id: &str, client_id: &str, tenant: &str) -> Result<Stri
     })
 }
 
+/// Codifica el mínimo necesario para usar un valor dentro de un query param.
+fn encode_query_value(value: &str) -> String {
+    value.replace('%', "%25").replace(' ', "%20").replace('"', "%22").replace('#', "%23").replace('&', "%26").replace('+', "%2B").replace('\r', "").replace('\n', "")
+}
+
 #[tauri::command]
-pub fn list_graph_messages(account_id: String, client_id: String, tenant: String, top: Option<u32>) -> Result<Vec<GraphMessage>, String> {
+pub fn list_graph_messages(account_id: String, client_id: String, tenant: String, top: Option<u32>, search: Option<String>) -> Result<Vec<GraphMessage>, String> {
     let access = refresh_token(&account_id, &client_id, &tenant)?;
     let limit = top.unwrap_or(30).clamp(1, 100);
-    let response = Client::new().get(format!("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top={limit}&$orderby=receivedDateTime%20desc&$select=id,subject,bodyPreview,body,isRead,hasAttachments,receivedDateTime,from")).bearer_auth(access).send().map_err(|e| format!("No se pudo consultar Microsoft Graph: {e}"))?;
+    let select = "id,subject,bodyPreview,body,isRead,hasAttachments,receivedDateTime,from";
+    let (url, use_search) = match search.as_deref().map(str::trim).filter(|query| query.chars().count() >= 2) {
+        Some(query) => (format!("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top={limit}&$select={select}&$search={}", encode_query_value(&format!("\"{query}\""))), true),
+        None => (format!("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top={limit}&$orderby=receivedDateTime%20desc&$select={select}"), false),
+    };
+    // $search es incompatible con $orderby y exige el encabezado ConsistencyLevel.
+    let mut request = Client::new().get(&url).bearer_auth(access);
+    if use_search { request = request.header("ConsistencyLevel", "eventual"); }
+    let response = request.send().map_err(|e| format!("No se pudo consultar Microsoft Graph: {e}"))?;
     if !response.status().is_success() { return Err(format!("Microsoft Graph respondió con {}", response.status())); }
     let payload: GraphResponse = response.json().map_err(|e| format!("Respuesta Graph inválida: {e}"))?;
     Ok(payload.value.into_iter().map(|message| GraphMessage { id: message.id, body: message.body.and_then(|body| body.content), has_attachments: message.has_attachments.unwrap_or(false), subject: message.subject.unwrap_or_else(|| "(Sin asunto)".into()), sender: message.from.and_then(|from| from.email_address).and_then(|address| address.address).unwrap_or_else(|| "Desconocido".into()), preview: message.body_preview.unwrap_or_default(), received_at: message.received_date_time, is_read: message.is_read.unwrap_or(false) }).collect())
