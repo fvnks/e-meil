@@ -13,6 +13,7 @@ import { deletePop3Message, listPop3Messages, readPop3Message, testPop3Connectio
   import type { CachedMessage } from './lib/cache';
   import { startGoogleOauth, startMicrosoftLoginWindow, waitForGoogleAuthorization, waitForMicrosoftAuthorization } from './lib/oauth';
   import { MICROSOFT_CLIENT_ID, MICROSOFT_TENANT } from './lib/config';
+  import { checkAppUpdate, installAppUpdate, type UpdateInfo } from './lib/updater';
 import { getLocale, initLocale, setLocale, t, type Locale } from './lib/i18n';
   import { inspectAttachment, sendSmtpMail } from './lib/smtp';
   import { archiveGraphMessage, createGraphDraft, deleteGraphMessage, listGraphMessages, markGraphMessage, sendGraphMessage } from './lib/graph';
@@ -762,6 +763,28 @@ function wakeSnoozed() {
     } catch (error) { settingsNotice = String(error); }
   }
   function persistSyncInterval() { localStorage.setItem('emeil-sync-interval-min', String(syncIntervalMin)); settingsNotice = t('settings.saved'); }
+  let updateInfo = $state<UpdateInfo | null>(null);
+  let updateBusy = $state(false);
+  async function checkUpdates() {
+    if (updateBusy) return;
+    updateBusy = true; updateInfo = null; settingsNotice = '';
+    try {
+      updateInfo = await checkAppUpdate();
+      settingsNotice = updateInfo.available ? t('settings.updateAvailable', { version: updateInfo.version, current: updateInfo.currentVersion }) : t('settings.upToDate', { version: updateInfo.currentVersion });
+    } catch (error) { settingsNotice = t('settings.updatesFailed') + ' ' + String(error); }
+    finally { updateBusy = false; }
+  }
+  async function installUpdate() {
+    if (updateBusy || !updateInfo?.available) return;
+    updateBusy = true; settingsNotice = t('settings.installing');
+    try {
+      await installAppUpdate();
+      // Si retorna sin reiniciar, el flujo de instalación no completó:
+      // se rehabilita el botón para reintentar.
+      settingsNotice = t('settings.updatesFailed');
+    } catch (error) { settingsNotice = String(error); }
+    finally { updateBusy = false; }
+  }
   function persistNotifications() { localStorage.setItem('emeil-notifications', notificationsEnabled ? 'on' : 'off'); settingsNotice = t('settings.saved'); }
   function saveSignature() { localStorage.setItem('emeil-signature', signature); settingsNotice = t('settings.signatureSaved'); }
   function applyLanguage(next: Locale) { setLocale(next); window.location.reload(); }
@@ -1230,6 +1253,15 @@ function wakeSnoozed() {
             </label>
             <label class="settings-row"><input type="checkbox" bind:checked={notificationsEnabled} onchange={persistNotifications} /> {t('settings.notifications')}</label>
             <p class="settings-hint">{t('settings.syncHint')}</p>
+          </div>
+          <div class="settings-card" id="settings-updates">
+            <h3>{t('settings.updatesTitle')}</h3>
+            <p class="settings-hint">{t('settings.updatesHint')}</p>
+            <button class="btn-primary" onclick={checkUpdates} disabled={updateBusy}>{updateBusy ? t('settings.checking') : t('settings.checkUpdates')}</button>
+            {#if updateInfo?.available}
+              {#if updateInfo.notes}<p class="settings-hint">{updateInfo.notes}</p>{/if}
+              <button class="btn-primary" onclick={installUpdate} disabled={updateBusy}>{updateBusy ? t('settings.installing') : t('settings.installUpdate')}</button>
+            {/if}
           </div>
           <div class="settings-card" id="settings-compose">
             <h3>{t('settings.composeTitle')}</h3>

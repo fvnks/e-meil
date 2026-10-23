@@ -6,10 +6,12 @@ mod oauth;
 mod pop3_client;
 mod smtp_client;
 mod tray;
+mod updater;
 mod graph;
 mod graph_actions;
 mod graph_send;
 use oauth::OAuthState;
+use std::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,6 +20,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updater::PendingUpdate(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             credentials::save_credential,
             credentials::delete_credential,
@@ -57,7 +61,9 @@ pub fn run() {
             graph_actions::delete_graph_message,
             graph_send::send_graph_message,
             graph_send::create_graph_draft,
-            tray::set_tray_badge
+            tray::set_tray_badge,
+            updater::check_app_update,
+            updater::install_app_update
         ])
         .setup(|app| {
             // Ícono de bandeja con menú (Abrir / Redactar / Sincronizar / Salir).
