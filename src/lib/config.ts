@@ -5,14 +5,10 @@
  * la persona no tenga que registrar una aplicación en Entra ID: elige
  * "Microsoft" y firma con su cuenta de Hotmail, Outlook, Live o laboral.
  *
- * Para distribuir una build propia basta con definir
- * `VITE_MICROSOFT_CLIENT_ID` en el entorno de compilación; la interfaz no
- * cambia y no se pide nada al usuario final.
+ * La ID vive aquí, fija en el código, para que TODAS las builds (dev, CI y
+ * release) usen la misma identidad sin configuración por parte del usuario.
+ * Si algún día hay que renovarla: se registra la nueva app en Entra ID con la
+ * redirección nativa, se actualiza esta constante y se recompila.
  */
-// Public OAuth client id for Microsoft.  
-// This client id **must** be registered in Azure AD with the redirect URI:
-//   https://login.microsoftonline.com/common/oauth2/nativeclient
-// Use the same id for every deployment – no per-user configuration.
-// TODO: replace the placeholder below with your actual public client id.
-export const MICROSOFT_CLIENT_ID = 'YOUR_PUBLIC_MICROSOFT_CLIENT_ID';
+export const MICROSOFT_CLIENT_ID = 'facd6cff-a294-4415-b59f-c5b01937d7bd';
 export const MICROSOFT_TENANT = 'common';
