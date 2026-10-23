@@ -9,7 +9,10 @@
  * `VITE_MICROSOFT_CLIENT_ID` en el entorno de compilación; la interfaz no
  * cambia y no se pide nada al usuario final.
  */
-const envClientId = (import.meta.env.VITE_MICROSOFT_CLIENT_ID as string | undefined)?.trim();
-
-export const MICROSOFT_CLIENT_ID = envClientId || 'facd6cff-a294-4415-b59f-c5b01937d7bd';
+// Public OAuth client id for Microsoft.  
+// This client id **must** be registered in Azure AD with the redirect URI:
+//   https://login.microsoftonline.com/common/oauth2/nativeclient
+// Use the same id for every deployment – no per-user configuration.
+// TODO: replace the placeholder below with your actual public client id.
+export const MICROSOFT_CLIENT_ID = 'YOUR_PUBLIC_MICROSOFT_CLIENT_ID';
 export const MICROSOFT_TENANT = 'common';
