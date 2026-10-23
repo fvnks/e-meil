@@ -2,8 +2,8 @@
   import { tick } from 'svelte';
   import { initialSetup, suggestCommonServer, validateServerSettings } from './lib/account-setup';
   import type { AccountSetup, MailProvider, CalendarEvent, CalendarCalendar, Contact, AddressBook, CalendarAccount, ContactAccount, EventReminder, ContactEmail, ContactPhone, ContactAddress } from './lib/types';
-  import { credentialBackendStatus, saveCredential } from './lib/credentials';
-  import { listAccounts, saveAccountMetadata, saveMicrosoftAccount } from './lib/accounts';
+  import { credentialBackendStatus, deleteCredential, saveCredential } from './lib/credentials';
+  import { deleteAccount, listAccounts, saveAccountMetadata, saveMicrosoftAccount } from './lib/accounts';
   import { deleteImapMessage, downloadImapAttachment, listImapFolders, listImapMessages, listImapMessagesIncremental, moveImapMessage, readImapMessage, saveImapDraft, searchImapMessages, setImapSeen, testImapConnection } from './lib/imap';
   import type { ImapMessageContent } from './lib/imap';
   import type { AccountRecord } from './lib/accounts';
@@ -11,7 +11,7 @@ import { deletePop3Message, listPop3Messages, readPop3Message, testPop3Connectio
   import { listCachedMessages, updateCachedMessageState, upsertCachedMessages } from './lib/cache';
   import type { CachedMessage } from './lib/cache';
   import { startMicrosoftOAuth, waitForMicrosoftAuthorization } from './lib/oauth';
-import { initLocale, t } from './lib/i18n';
+import { getLocale, initLocale, setLocale, t, type Locale } from './lib/i18n';
   import { inspectAttachment, sendSmtpMail } from './lib/smtp';
   import { archiveGraphMessage, createGraphDraft, deleteGraphMessage, listGraphMessages, markGraphMessage, sendGraphMessage } from './lib/graph';
   import { notifyNewMail as notifyNewMailDesktop, type NewMailSummary } from './lib/notifications';
@@ -38,7 +38,7 @@ import { initLocale, t } from './lib/i18n';
   let composeAttachments = $state<{ name: string; size: number; type: string; path: string }[]>([]);
   let composeCc = $state('');
   let composeBcc = $state('');
-  let signature = $state((typeof localStorage !== 'undefined' && localStorage.getItem('emeil-signature')) || 'Saludos,\n\nCamila González\nEstudio Co.');
+  let signature = $state((typeof localStorage !== 'undefined' && localStorage.getItem('emeil-signature')) || '');
   let showCcBcc = $state(false);
   let composeNotice = $state('');
   let sending = $state(false);
@@ -114,6 +114,7 @@ import { initLocale, t } from './lib/i18n';
       if (key === '1') { event.preventDefault(); activeView = 'mail'; return; }
       if (key === '2') { event.preventDefault(); activeView = 'calendar'; return; }
       if (key === '3') { event.preventDefault(); activeView = 'contacts'; return; }
+      if (key === '4') { event.preventDefault(); activeView = 'settings'; return; }
     }
     if (event.key !== 'Escape') return;
     if (contextMenu) contextMenu = null;
@@ -152,7 +153,7 @@ import { initLocale, t } from './lib/i18n';
   let mobileReadingOpen = $state(false);
 
   // Calendar & Contacts state
-  let activeView = $state<'mail' | 'calendar' | 'contacts'>('mail');
+  let activeView = $state<'mail' | 'calendar' | 'contacts' | 'settings'>('mail');
 
   // En móvil: al cambiar de vista o carpeta se cierra el drawer de carpetas y
   // el panel de lectura a pantalla completa vuelve a la lista.
@@ -453,13 +454,14 @@ import { initLocale, t } from './lib/i18n';
     else syncImapAccount();
   }
   function maybeAutoSync() {
-    if (!activeAccount || syncing) return;
-    const intervalMin = Math.max(1, parseInt(localStorage.getItem('emeil-sync-interval-min') || '5', 10) || 5);
-    if (Date.now() - lastAutoSyncAt < intervalMin * 60_000) return;
+    if (!activeAccount || syncing || syncIntervalMin === 0) return;
+    if (Date.now() - lastAutoSyncAt < syncIntervalMin * 60_000) return;
     lastAutoSyncAt = Date.now();
     syncActiveAccount();
   }
   $effect(() => { const id = window.setInterval(maybeAutoSync, 30_000); return () => window.clearInterval(id); });
+  // Al entrar a Ajustes se refresca la lista real de cuentas guardadas.
+  $effect(() => { if (activeView === 'settings') void loadSettingsAccounts(); });
 
   // Detección de correo nuevo: la primera sincronización de cada cuenta es la
   // línea base; a partir de ahí, los ids nuevos notifican si la app no está
@@ -473,7 +475,7 @@ import { initLocale, t } from './lib/i18n';
     return fresh;
   }
   function notifyNewMail(messages: NewMailSummary[]) {
-    if (!document.hidden) return;
+    if (!notificationsEnabled || !document.hidden) return;
     void notifyNewMailDesktop(messages);
   }
 
@@ -537,6 +539,35 @@ import { initLocale, t } from './lib/i18n';
     if (!isTauri()) return;
     const unread = syncedMessages.filter((message) => message.unread).length + unifiedMessages.filter((message) => message.unread).length;
     try { await tauriInvoke('set_tray_badge', { unread }); } catch { /* la bandeja es opcional */ }
+  }
+  // --- Panel de configuración ------------------------------------------------
+  let savedAccountRecords = $state<AccountRecord[]>([]);
+  let syncIntervalMin = $state(Math.max(0, parseInt(localStorage.getItem('emeil-sync-interval-min') ?? '5', 10) || 0));
+  let notificationsEnabled = $state(localStorage.getItem('emeil-notifications') !== 'off');
+  let settingsNotice = $state('');
+  let locale = $state<Locale>(getLocale());
+  async function loadSettingsAccounts() {
+    try { savedAccountRecords = await listAccounts(); } catch { savedAccountRecords = []; }
+  }
+  async function removeAccount(record: AccountRecord) {
+    if (!confirm(t('settings.deleteConfirm', { email: record.emailAddress }))) return;
+    try {
+      await deleteAccount(record.id);
+      await deleteCredential(record.id).catch(() => undefined);
+      if (activeAccount?.email === record.emailAddress) { activeAccount = null; localStorage.removeItem('emeil-active-account'); }
+      await loadSavedAccounts();
+      await loadSettingsAccounts();
+      settingsNotice = t('settings.deleted');
+    } catch (error) { settingsNotice = String(error); }
+  }
+  function persistSyncInterval() { localStorage.setItem('emeil-sync-interval-min', String(syncIntervalMin)); settingsNotice = t('settings.saved'); }
+  function persistNotifications() { localStorage.setItem('emeil-notifications', notificationsEnabled ? 'on' : 'off'); settingsNotice = t('settings.saved'); }
+  function saveSignature() { localStorage.setItem('emeil-signature', signature); settingsNotice = t('settings.signatureSaved'); }
+  function applyLanguage(next: Locale) { setLocale(next); window.location.reload(); }
+  function resetLocalPreferences() {
+    if (!confirm(t('settings.resetConfirm'))) return;
+    for (const key of ['emeil-theme', 'emeil-dark-mode', 'emeil-locale', 'emeil-sync-interval-min', 'emeil-notifications', 'emeil-signature', 'emeil-draft']) localStorage.removeItem(key);
+    window.location.reload();
   }
   function applySuggestions() {
     if (setup.provider === 'imap' || setup.provider === 'pop3') {
@@ -794,7 +825,7 @@ import { initLocale, t } from './lib/i18n';
   </header>
   {#if drawerOpen}<div class="drawer-backdrop" role="presentation" aria-hidden="true" onclick={() => drawerOpen = false}></div>{/if}
   <div class="workspace">
-    <nav class="rail" aria-label={t('rail.apps')}><button class="rail-item" class:active={activeView === 'mail'} use:tooltip={t('rail.mail')} aria-label={t('rail.mail')} onclick={() => activeView = 'mail'}><span>✉</span><i></i></button><button class="rail-item" class:active={activeView === 'calendar'} use:tooltip={t('rail.calendar')} aria-label={t('rail.calendar')} onclick={() => activeView = 'calendar'}><span>▦</span></button><button class="rail-item" class:active={activeView === 'contacts'} use:tooltip={t('rail.contacts')} aria-label={t('rail.contacts')} onclick={() => activeView = 'contacts'}><span>♙</span></button><div class="rail-spacer"></div><button class="rail-item" use:tooltip={t('rail.more')} aria-label={t('rail.more')}><span>⊞</span></button></nav>
+    <nav class="rail" aria-label={t('rail.apps')}><button class="rail-item" class:active={activeView === 'mail'} use:tooltip={t('rail.mail')} aria-label={t('rail.mail')} onclick={() => activeView = 'mail'}><span>✉</span><i></i></button><button class="rail-item" class:active={activeView === 'calendar'} use:tooltip={t('rail.calendar')} aria-label={t('rail.calendar')} onclick={() => activeView = 'calendar'}><span>▦</span></button><button class="rail-item" class:active={activeView === 'contacts'} use:tooltip={t('rail.contacts')} aria-label={t('rail.contacts')} onclick={() => activeView = 'contacts'}><span>♙</span></button><button class="rail-item" class:active={activeView === 'settings'} use:tooltip={t('rail.settings')} aria-label={t('rail.settings')} onclick={() => activeView = 'settings'}><span>⚙</span></button><div class="rail-spacer"></div><button class="rail-item" use:tooltip={t('rail.more')} aria-label={t('rail.more')}><span>⊞</span></button></nav>
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-heading"><span>{t('sidebar.folders')}</span><button use:tooltip={t('sidebar.foldersOptions')} aria-label={t('sidebar.foldersOptions')}>···</button></div>
       <button class="compose-button" onclick={() => composeOpen = true}><span>＋</span> {t('sidebar.compose')} <kbd>N</kbd></button>
@@ -903,6 +934,74 @@ import { initLocale, t } from './lib/i18n';
         <Modal open={contactFormOpen} title={selectedContact ? 'Editar contacto' : 'Nuevo contacto'} onclose={closeContactForm} class="contact-form">
           <label>{t('contacts.name')}<input bind:value={contactForm.displayName} placeholder="Nombre completo" required></label><div class="form-row"><label>{t('contacts.name')}<input bind:value={contactForm.firstName} placeholder="Nombre"></label><label>{t('contacts.lastName')}<input bind:value={contactForm.lastName} placeholder="Apellidos"></label></div><label>{t('contacts.email')}<input type="email" bind:value={contactForm.emailAddresses[0].address} placeholder="email@ejemplo.com"></label><label>{t('contacts.phone')}<input type="tel" bind:value={contactForm.phoneNumbers[0].number} placeholder="+34 600 000 000"></label><label>{t('contacts.organization')}<input bind:value={contactForm.organization} placeholder="Empresa/Organización"></label><label>{t('contacts.role')}<input bind:value={contactForm.title} placeholder="Cargo"></label><label>{t('contacts.birthday')}<input type="date" bind:value={contactForm.birthday}></label><label>{t('contacts.notes')}<textarea bind:value={contactForm.notes} rows="3"></textarea></label><div class="form-actions"><button class="btn-secondary" onclick={closeContactForm}>{t('common.cancel')}</button><button class="btn-primary" onclick={saveContact}>{t('common.save')}</button></div>
         </Modal>
+      </section>
+      {:else if activeView === 'settings'}
+      <section class="settings-view" aria-label={t('settings.title')}>
+        <div class="calendar-header"><div class="calendar-nav"><h2>{t('settings.title')}</h2></div><div class="calendar-actions"><span class="list-count">e-Meil v0.1.0</span></div></div>
+        <div class="settings-body">
+          {#if settingsNotice}<div class="sync-banner">{settingsNotice}<button class="search-exit" type="button" onclick={() => settingsNotice = ''}>OK</button></div>{/if}
+          <div class="settings-card">
+            <h3>{t('settings.accounts')}</h3>
+            {#if !savedAccountRecords.length}<p class="settings-hint">{t('settings.accountsEmpty')}</p>{/if}
+            {#each savedAccountRecords as record (record.id)}
+              <div class="settings-account">
+                <span class="provider-dot">{record.provider === 'microsoft-graph' ? 'ms' : record.provider === 'pop3' ? 'pop' : 'imap'}</span>
+                <div class="settings-account-meta"><strong>{record.displayName}</strong><span>{record.emailAddress}</span></div>
+                <div class="settings-account-actions">
+                  {#if activeAccount?.email === record.emailAddress}<small class="settings-active">● {t('settings.active')}</small>{:else}<button class="btn-secondary" onclick={() => { const account = configuredAccounts.find((item) => item.email === record.emailAddress); if (account) selectAccount(account); activeView = 'mail'; }}>{t('settings.use')}</button>{/if}
+                  <button class="btn-secondary settings-danger" onclick={() => removeAccount(record)}>{t('settings.delete')}</button>
+                </div>
+              </div>
+            {/each}
+            <button class="btn-primary" onclick={() => { setupOpen = true; setupStep = 'provider'; }}>{t('settings.addAccount')}</button>
+          </div>
+          <div class="settings-card">
+            <h3>{t('settings.sync')}</h3>
+            <label class="settings-row">{t('settings.syncInterval')}
+              <select bind:value={syncIntervalMin} onchange={persistSyncInterval} aria-label={t('settings.syncInterval')}>
+                <option value={0}>{t('settings.syncManual')}</option>
+                <option value={5}>5 min</option>
+                <option value={10}>10 min</option>
+                <option value={15}>15 min</option>
+                <option value={30}>30 min</option>
+                <option value={60}>60 min</option>
+              </select>
+            </label>
+            <label class="settings-row"><input type="checkbox" bind:checked={notificationsEnabled} onchange={persistNotifications} /> {t('settings.notifications')}</label>
+            <p class="settings-hint">{t('settings.syncHint')}</p>
+          </div>
+          <div class="settings-card">
+            <h3>{t('settings.composeTitle')}</h3>
+            <label class="settings-column">{t('settings.signature')}
+              <textarea bind:value={signature} rows="4" placeholder={t('settings.signaturePlaceholder')}></textarea>
+            </label>
+            <button class="btn-primary" onclick={saveSignature}>{t('settings.saveSignature')}</button>
+            <p class="settings-hint">{t('settings.signatureHint')}</p>
+          </div>
+          <div class="settings-card">
+            <h3>{t('settings.appearance')}</h3>
+            <label class="settings-row"><input type="checkbox" bind:checked={dark} onchange={() => setDark(dark)} /> {t('theme.dark')}</label>
+            <div class="settings-row settings-themes" role="group" aria-label={t('topbar.theme')}>
+              {#each themes as option}<button class="theme-swatch" class:theme-selected={theme === option.id} style={`--swatch:${option.color}`} onclick={() => setTheme(option.id)} aria-label={option.label}></button>{/each}
+            </div>
+            <label class="settings-row">{t('settings.language')}
+              <select bind:value={locale} onchange={() => applyLanguage(locale)} aria-label={t('settings.language')}>
+                <option value="es">Español</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+          </div>
+          <div class="settings-card">
+            <h3>{t('settings.dataTitle')}</h3>
+            <p class="settings-hint">{t('settings.dataHint')}</p>
+            <button class="btn-secondary settings-danger" onclick={resetLocalPreferences}>{t('settings.reset')}</button>
+          </div>
+          <div class="settings-card">
+            <h3>{t('settings.about')}</h3>
+            <p class="settings-hint">e-Meil v0.1.0 · MIT · Tauri 2 + Rust + Svelte 5</p>
+            <p class="settings-hint">{t('settings.aboutHint')}</p>
+          </div>
+        </div>
       </section>
       {/if}
       <section class="reading-pane" class:reading-open={mobileReadingOpen}>{#if activeRealMessage}<div class="reading-toolbar"><div class="toolbar-left"><button class="pane-tool" title={t('common.backToList')} onclick={() => { activeRealMessage = null; mobileReadingOpen = false; }}>←</button><span class="toolbar-divider"></span><span class="real-badge">IMAP</span></div><div class="toolbar-right"><span>{loadingMessage ? 'Cargando…' : 'Mensaje real'}</span></div></div><article class="email"><div class="email-category"><span class="category-dot"></span> {t('reading.imapAccount')} <span class="category-line"></span></div><div class="email-subject-row"><h2>{activeRealMessage.subject}</h2><span class="real-attachment">{activeRealMessage.hasAttachments ? '⌁ adjuntos' : ''}</span></div><div class="email-from"><div class="sender-avatar large lavender">{messageInitials(activeRealMessage.from)}</div><div class="from-info"><div class="from-name">{activeRealMessage.from}</div><span class="to-line">{t('reading.syncedFrom', { mailbox: selectedMailbox })}</span></div></div><div class="email-body real-body"><div class="safe-content-notice">{t('reading.plainTextNotice')}</div>{#if activeRealMessage.attachments.length}<div class="real-attachments">{#each activeRealMessage.attachments as attachment}<div class="real-attachment-card"><span>⌁</span><div><strong>{attachment.filename}</strong><small>{attachment.contentType} · límite 25 MB</small></div><button class="download-attachment" onclick={() => downloadAttachment(attachment)} title={t('reading.saveAttachment')}>↓</button></div>{/each}</div>{/if}<pre>{activeRealMessage.text || 'Este mensaje no contiene texto visible.'}</pre><div class="email-actions"><button class="reply-button" onclick={() => openReply('imap')}>↶ <span>{t('common.reply')}</span></button><button class="forward-button" onclick={() => openForward('imap')}>↗ <span>{t('common.forward')}</span></button></div></div></article>{:else if activeGraphMessage}<div class="reading-toolbar"><div class="toolbar-left"><button class="pane-tool" title={t('common.backToList')} onclick={() => { activeGraphMessage = null; mobileReadingOpen = false; }}>←</button><span class="toolbar-divider"></span><span class="real-badge">GRAPH</span><button class="pane-tool" title={t('batch.archive')} onclick={() => graphAction('archive')}>▣</button><button class="pane-tool" title={t('batch.delete')} onclick={() => graphAction('delete')}>♲</button></div></div><article class="email"><div class="email-category"><span class="category-dot"></span> {t('reading.ms365')} <span class="category-line"></span></div><div class="email-subject-row"><h2>{activeGraphMessage.subject}</h2><span class="real-attachment">{activeGraphMessage.hasAttachments ? '⌁ adjuntos' : ''}</span></div><div class="email-from"><div class="sender-avatar large lavender">{messageInitials(activeGraphMessage.sender)}</div><div class="from-info"><div class="from-name">{activeGraphMessage.sender}</div><span class="to-line">{t('reading.syncedFromGraph')}</span></div></div><div class="email-body real-body"><div class="safe-content-notice">{t('reading.graphSecureNotice')}</div><pre>{activeGraphMessage.body || activeGraphMessage.preview || 'Este mensaje no contiene texto visible.'}</pre></div><div class="email-actions"><button class="reply-button" onclick={() => openReply('graph')}>↶ <span>{t('common.reply')}</span></button><button class="forward-button" onclick={() => openForward('graph')}>↗ <span>{t('common.forward')}</span></button></div></article>{:else}<div class="empty-state">{t('common.emptyReading')}</div>{/if}</section>
