@@ -970,6 +970,7 @@ dependencies = [
  "lettre",
  "mime_guess",
  "native-tls",
+ "percent-encoding",
  "pretty_assertions",
  "rand 0.8.8",
  "regex",

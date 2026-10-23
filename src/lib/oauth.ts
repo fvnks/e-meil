@@ -56,6 +56,7 @@ export async function waitForGoogleAuthorization(
   { intervalMs = 2000, timeoutMs = 300_000, isCurrent, onTick }: WaitForOptions = {}
 ): Promise<OAuthStatus> {
   const startedAt = Date.now();
+  let consecutiveErrors = 0;
   for (;;) {
     if (isCurrent && !isCurrent()) {
       return { status: 'stale', email: null, message: 'Este intento de autorización fue reemplazado por uno más reciente.' };
@@ -68,11 +69,17 @@ export async function waitForGoogleAuthorization(
     try {
       status = await pollGoogleOAuth(state);
     } catch (error) {
-      // Los errores de red son transitorios: se reintenta hasta el plazo máximo.
+      // Un fallo de red puntual es transitorio; tres seguidos indican un
+      // problema real: se informa en vez de esperar el timeout completo.
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= 3) {
+        return { status: 'error', email: null, message: `No se pudo completar la autorización de Google: ${String(error)}` };
+      }
       onTick?.(elapsed);
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
       continue;
     }
+    consecutiveErrors = 0;
     if (status.status === 'authorized' || status.status === 'error') return status;
     onTick?.(elapsed);
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -95,6 +102,7 @@ export async function waitForMicrosoftAuthorization(
   { intervalMs = 2000, timeoutMs = 300_000, isCurrent, onTick }: WaitForOptions = {}
 ): Promise<OAuthStatus> {
   const startedAt = Date.now();
+  let consecutiveErrors = 0;
   for (;;) {
     if (isCurrent && !isCurrent()) {
       return { status: 'stale', email: null, message: 'Este intento de autorización fue reemplazado por uno más reciente.' };
@@ -107,11 +115,17 @@ export async function waitForMicrosoftAuthorization(
     try {
       status = await pollMicrosoftOAuth(clientId, tenant, state);
     } catch (error) {
-      // Los errores de red son transitorios: se reintenta hasta el plazo máximo.
+      // Un fallo de red puntual es transitorio; tres seguidos indican un
+      // problema real: se informa en vez de esperar el timeout completo.
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= 3) {
+        return { status: 'error', email: null, message: `No se pudo completar la autorización de Microsoft: ${String(error)}` };
+      }
       onTick?.(elapsed);
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
       continue;
     }
+    consecutiveErrors = 0;
     if (status.status === 'authorized' || status.status === 'error') return status;
     onTick?.(elapsed);
     await new Promise((resolve) => setTimeout(resolve, intervalMs));

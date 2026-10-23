@@ -301,19 +301,43 @@ pub async fn start_microsoft_oauth_window(app: tauri::AppHandle, state: tauri::S
     Ok(OAuthStart { authorization_url, state: oauth_state, redirect_uri: MS_NATIVE_REDIRECT.into() })
 }
 
+/// Decodifica pares `clave=valor` de una query o fragmento OAuth.
+///
+/// Los valores llegan percent-encoded (`%2F`, `%2B`…): se guardan decodificados
+/// para que el canje con reqwest los vuelva a codificar exactamente una vez.
+fn parse_pairs(source: &str) -> HashMap<String, String> {
+    use percent_encoding::percent_decode_str;
+    source
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(k, v)| (k.to_string(), percent_decode_str(v).decode_utf8_lossy().into_owned()))
+        .collect()
+}
+
+/// Extrae los parámetros de la respuesta OAuth de una redirección nativa.
+///
+/// El endpoint v2 de Microsoft entrega el `code` en la query o en el
+/// fragmento (`#code=…`) según cómo esté registrada la identidad del
+/// cliente; si la query no trae `state`, se intenta con el fragmento.
+fn response_params(url: &tauri::Url) -> HashMap<String, String> {
+    let from_query = parse_pairs(url.query().unwrap_or(""));
+    if from_query.contains_key("state") { return from_query; }
+    parse_pairs(url.fragment().unwrap_or(""))
+}
+
 /// Guarda el resultado de la redirección nativa (código o error) en el intento
 /// cuyo `state` coincide. La descripción del error se conserva para mostrarla.
 fn store_native_redirect(url: &tauri::Url, shared: &Arc<Mutex<HashMap<String, PendingOAuth>>>) {
-    let values: HashMap<_, _> = url.query().unwrap_or("").split('&').filter_map(|pair| pair.split_once('=')).collect();
+    let values = response_params(url);
     let Some(received_state) = values.get("state") else { return; };
     let Ok(mut pending) = shared.lock() else { return; };
-    let Some(item) = pending.get_mut(*received_state) else { return; };
+    let Some(item) = pending.get_mut(received_state.as_str()) else { return; };
     if let Some(error) = values.get("error") {
         item.error = Some(format!("Microsoft rechazó el inicio de sesión: {error}"));
         return;
     }
     if item.code.is_none() {
-        if let Some(code) = values.get("code") { item.code = Some((*code).to_string()); }
+        if let Some(code) = values.get("code") { item.code = Some(code.clone()); }
     }
 }
 
@@ -348,12 +372,12 @@ fn serve_callback(listener: TcpListener, shared: Arc<Mutex<HashMap<String, Pendi
 fn store_callback_code(request: &str, shared: &Arc<Mutex<HashMap<String, PendingOAuth>>>) -> bool {
     let Some(path) = request.lines().next().and_then(|line| line.split_whitespace().nth(1)) else { return false; };
     let query = path.split('?').nth(1).unwrap_or("");
-    let values: HashMap<_, _> = query.split('&').filter_map(|pair| pair.split_once('=')).collect();
+    let values = parse_pairs(query);
     let (Some(received_state), Some(code)) = (values.get("state"), values.get("code")) else { return false; };
     let Ok(mut pending) = shared.lock() else { return false; };
-    match pending.get_mut(*received_state) {
+    match pending.get_mut(received_state.as_str()) {
         // Primero gana: una segunda redirección del mismo intento se ignora.
-        Some(item) if item.code.is_none() => { item.code = Some(code.to_string()); true }
+        Some(item) if item.code.is_none() => { item.code = Some(code.clone()); true }
         _ => false,
     }
 }
@@ -492,5 +516,33 @@ mod tests {
         // Una redirección de otro intento no toca el estado ajeno.
         store_native_redirect(&autorizado, &shared);
         assert!(shared.lock().unwrap().get("estado").and_then(|item| item.code.clone()).is_some());
+    }
+
+    #[test]
+    fn redireccion_en_fragmento_y_valores_codificados() {
+        let mut map = HashMap::new();
+        map.insert("estado2".to_string(), PendingOAuth { verifier: "v".into(), code: None, redirect_uri: MS_NATIVE_REDIRECT.into(), error: None });
+        let shared = Arc::new(Mutex::new(map));
+
+        // Clientes SPA: el endpoint v2 entrega el code en el fragmento, no en la query.
+        let fragmento = tauri::Url::parse("https://login.microsoftonline.com/common/oauth2/nativeclient#code=M.C540%2FBAY.2.U.%2Bxyz%3D&state=estado2").unwrap();
+        assert!(fragmento.query().is_none(), "el code debe vivir en el fragmento para este test");
+        store_native_redirect(&fragmento, &shared);
+        assert_eq!(
+            shared.lock().unwrap().get("estado2").and_then(|item| item.code.clone()).as_deref(),
+            Some("M.C540/BAY.2.U.+xyz="),
+            "el code debe leerse del fragmento y decodificarse una sola vez"
+        );
+
+        // Query con valores percent-encoded: se decodifican al guardar.
+        let mut segundo = HashMap::new();
+        segundo.insert("estado3".to_string(), PendingOAuth { verifier: "v".into(), code: None, redirect_uri: MS_NATIVE_REDIRECT.into(), error: None });
+        let shared = Arc::new(Mutex::new(segundo));
+        let query_codificada = tauri::Url::parse("https://login.microsoftonline.com/common/oauth2/nativeclient?code=0.AXoA%2Fx%2B%3D&state=estado3").unwrap();
+        store_native_redirect(&query_codificada, &shared);
+        assert_eq!(
+            shared.lock().unwrap().get("estado3").and_then(|item| item.code.clone()).as_deref(),
+            Some("0.AXoA/x+=")
+        );
     }
 }
