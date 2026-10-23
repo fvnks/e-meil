@@ -2,14 +2,22 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capacidades mínimas del cliente e-Meil",
-  "windows": ["main", "splashscreen"],
+  "windows": ["main", "splashscreen", "ms-login"],
   "permissions": [
     "core:default",
     "dialog:default",
     "notification:default",
     "deep-link:default",
+    "core:window:allow-create",
+    "core:window:allow-destroy",
     "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
     "core:window:allow-set-focus",
-    "core:window:allow-close"
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-set-resizable",
+    "core:window:allow-set-min-size",
+    "core:window:allow-center"
   ]
 }

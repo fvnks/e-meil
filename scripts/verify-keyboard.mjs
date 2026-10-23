@@ -80,7 +80,7 @@ function createClient(socket) {
       const base = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
       await this.send('Input.dispatchKeyEvent', { type: 'keyDown', ...base, modifiers: 0 });
       await this.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base, modifiers: 0 });
-      await sleep(80);
+      await sleep(150);
     },
     async setViewport(width, height) {
       await this.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width <= 600 });
@@ -109,7 +109,7 @@ async function main() {
   await client.send('Page.enable');
   await client.setViewport(1280, 800);
   await client.send('Page.navigate', { url: APP_URL });
-  await sleep(2500);
+  await sleep(3500);
 
   // --- 1. Apertura del menú contextual -------------------------------------
   const openMenu = `(() => {
@@ -118,7 +118,7 @@ async function main() {
     return 'ok';
   })()`;
   await client.evaluate(openMenu);
-  await sleep(400);
+  await sleep(600);
   const first = await client.evaluate(FOCUS_ITEM);
   record('El menú abre y el foco entra al primer menuitem', first.menuOpen && first.role === 'menuitem', JSON.stringify(first));
 

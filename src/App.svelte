@@ -1093,8 +1093,6 @@ function wakeSnoozed() {
 <svelte:head><title>{t('app.title')}</title></svelte:head>
 
 <svelte:window oncontextmenu={(event) => openContextMenu(event)} onclick={closeContextMenu} onkeydown={handleWindowKeydown} onfocus={maybeAutoSync} /><div class="app-shell theme-{theme}" class:dark={dark} class:drawer-open={drawerOpen}>
-  <a href="#main-content" class="skip-link">{t('app.skipContent')}</a>
-  <a href="#sidebar" class="skip-link">{t('app.skipSidebar')}</a>
   <header class="topbar">
     <button class="menu-button" type="button" aria-label={t('topbar.menu')} aria-expanded={drawerOpen} aria-controls="sidebar" onclick={() => drawerOpen = !drawerOpen}><span class="menu-icon" aria-hidden="true"></span><span class="menu-icon" aria-hidden="true"></span><span class="menu-icon" aria-hidden="true"></span></button>
     <div class="brand"><div class="brand-mark"><span></span><span></span></div><span class="brand-name">e-meil</span></div>

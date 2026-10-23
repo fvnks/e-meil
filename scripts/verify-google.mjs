@@ -40,6 +40,8 @@ const target = await pickTarget();
 const socket = await connect(target.webSocketDebuggerUrl);
 const send = client(socket);
 await send('Page.enable'); await send('Runtime.enable');
+// Forzar viewport escritorio para que la grilla de 2 columnas esté activa.
+await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
 await send('Page.navigate', { url: APP_URL });
 await sleep(2500);
 // Cerrar onboarding si se abrió solo.

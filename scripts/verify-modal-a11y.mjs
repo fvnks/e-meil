@@ -109,7 +109,7 @@ async function main() {
   await client.send('Runtime.enable');
   await client.send('Page.enable');
   await client.send('Page.navigate', { url: APP_URL });
-  await sleep(2500);
+  await sleep(4000);
 
   const opened = await client.evaluate(`(() => {
     const railButtons = Array.from(document.querySelectorAll('.rail-item'));
@@ -119,7 +119,7 @@ async function main() {
     return 'clicked';
   })()`);
   record('Se abre la vista de calendario', opened === 'clicked', opened);
-  await sleep(600);
+  await sleep(1500);
 
   const openResult = await client.evaluate(`(() => {
     const buttons = Array.from(document.querySelectorAll('button'));
@@ -129,7 +129,7 @@ async function main() {
     return 'clicked';
   })()`);
   record('Se abre el modal de evento', openResult === 'clicked', openResult);
-  await sleep(700);
+  await sleep(1500);
 
   const dialogInfo = await client.evaluate(`(() => {
     const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
