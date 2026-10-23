@@ -5,6 +5,7 @@
   import { credentialBackendStatus, deleteCredential, saveCredential } from './lib/credentials';
   import { deleteAccount, listAccounts, saveAccountMetadata, saveMicrosoftAccount } from './lib/accounts';
   import { deleteImapMessage, downloadImapAttachment, listImapFolders, listImapMessages, listImapMessagesIncremental, moveImapMessage, readImapMessage, saveImapDraft, searchImapMessages, setImapSeen, testImapConnection } from './lib/imap';
+  import { createEmptyRule, getMatchingRules, loadRules, saveRules, type MailRule } from './lib/rules';
   import type { ImapMessageContent } from './lib/imap';
   import type { AccountRecord } from './lib/accounts';
 import { deletePop3Message, listPop3Messages, readPop3Message, testPop3Connection } from './lib/pop3';
@@ -238,7 +239,45 @@ import { getLocale, initLocale, setLocale, t, type Locale } from './lib/i18n';
     activeRealMessage = null; activeGraphMessage = null; mobileReadingOpen = false;
     syncMessage = `Pospuesto por ${hours >= 24 ? '1 día' : hours + ' hora(s)'}.`;
   }
-  function wakeSnoozed() {
+  async function applyRulesToMessages(messages: any[]) {
+    if (!messages.length) return;
+    const rules = loadRules().filter(r=>r.enabled);
+    if (!rules.length) return;
+    const toArchive: any[] = [];
+    const toDelete: any[] = [];
+    for (const mail of messages) {
+      const matches = getMatchingRules(mail, rules);
+      for (const rule of matches) {
+        for (const act of rule.actions) {
+          if (act.type === 'archive') toArchive.push(mail);
+          else if (act.type === 'delete') toDelete.push(mail);
+          else if (act.type === 'markRead') { try { const saved = await listAccounts(); const record = saved.find(r=>r.emailAddress === activeAccount?.email); if (record && activeProvider !== 'microsoft-graph') await setImapSeen({ accountId: record.id, host: record.incomingHost, port: record.incomingPort, security: record.incomingSecurity, username: record.incomingUsername, mailbox: mail.mailbox || selectedMailbox, uid: mail.uid, seen: true }); } catch {} }
+        }
+      }
+    }
+    // Best-effort: archive/delete for IMAP
+    for (const mail of toArchive) {
+      try {
+        const saved = await listAccounts();
+        const record = saved.find(r=>r.emailAddress === activeAccount?.email);
+        if (!record || activeProvider === 'microsoft-graph') continue;
+        if (!archiveFolder) continue;
+        await moveImapMessage({ accountId: record.id, host: record.incomingHost, port: record.incomingPort, security: record.incomingSecurity, username: record.incomingUsername, mailbox: mail.mailbox || selectedMailbox, destination: archiveFolder, uid: mail.uid });
+        syncedMessages = syncedMessages.filter(m=>m.uid !== mail.uid);
+      } catch {}
+    }
+    for (const mail of toDelete) {
+      try {
+        const saved = await listAccounts();
+        const record = saved.find(r=>r.emailAddress === activeAccount?.email);
+        if (!record || activeProvider === 'microsoft-graph') continue;
+        await deleteImapMessage({ accountId: record.id, host: record.incomingHost, port: record.incomingPort, security: record.incomingSecurity, username: record.incomingUsername, mailbox: mail.mailbox || selectedMailbox, uid: mail.uid });
+        syncedMessages = syncedMessages.filter(m=>m.uid !== mail.uid);
+      } catch {}
+    }
+  }
+
+function wakeSnoozed() {
     const now = Date.now();
     const expired: string[] = [];
     for (const key of snoozedKeys) {
@@ -539,6 +578,7 @@ import { getLocale, initLocale, setLocale, t, type Locale } from './lib/i18n';
         const previous = new Map(syncedMessages.map((message) => [message.uid, message]));
         const fresh = remoteMessages.map((message) => ({ ...message, accountId: record.id, mailbox: selectedMailbox, text: previous.get(message.uid)?.text ?? null, starred: previous.get(message.uid)?.starred ?? false, cachedAt: new Date().toISOString() }));
         syncedMessages = highestUid ? [...fresh, ...syncedMessages].slice(0, 100) : fresh;
+        if (fresh.length) void applyRulesToMessages(fresh);
         await upsertCachedMessages(syncedMessages);
         const freshOnes = reportNewMessages(syncedMessages.map((message) => ({ id: `imap:${message.uid}`, author: message.from, subject: message.subject, preview: message.preview })));
         if (freshOnes.length > 0) notifyNewMail(freshOnes);
@@ -699,6 +739,8 @@ import { getLocale, initLocale, setLocale, t, type Locale } from './lib/i18n';
 
 // --- Panel de configuración (ventana flotante, estilo del asistente) ------
   let settingsOpen = $state(false);
+  let rules = $state<MailRule[]>(loadRules());
+  let rulesDirty = $state(false);
   let savedAccountRecords = $state<AccountRecord[]>([]);
   let syncIntervalMin = $state(Math.max(0, parseInt(localStorage.getItem('emeil-sync-interval-min') ?? '5', 10) || 0));
   let notificationsEnabled = $state(localStorage.getItem('emeil-notifications') !== 'off');
@@ -1128,7 +1170,7 @@ import { getLocale, initLocale, setLocale, t, type Locale } from './lib/i18n';
 {#if sent}<div class="toast"><Icon name="check" size={13} /> <span>{t('reading.sent')}</span><button onclick={() => sent = false}>{t('common.undo')}</button></div>{/if}
 {#if setupOpen}<div class="modal-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) setupOpen = false; }}><section class="setup-window" aria-label={t('setup.windowLabel')}><aside class="setup-brand"><div class="setup-brand-mark"><svg width="22" height="19" viewBox="0 0 24 20" fill="none" aria-hidden="true"><path d="M3 5.5 12 12l9-6.5" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><span class="setup-brand-name">e-meil</span><p class="setup-brand-tagline">{t('setup.tagline')}</p><ol class="setup-steps"><li class:active={setupStep === 'provider'} class:done={setupStep !== 'provider'}><span>01</span>{t('setup.step1')}</li><li class:active={setupStep === 'details'}><span>02</span>{t('setup.step2')}</li></ol><span class="setup-brand-version">v0.1.0 · MIT</span></aside><div class="setup-main"><header class="setup-header"><div><span class="setup-kicker">{t('setup.title')}</span><h2>{setupStep === 'provider' ? t('setup.pickTitle') : t('setup.detailsTitle')}</h2><p>{setupStep === 'provider' ? t('setup.pickSub') : t('setup.detailsSub')}</p></div><button class="setup-close" type="button" onclick={() => setupOpen = false} aria-label={t('common.close')}>×</button></header>{#if setupStep === 'provider'}<div class="provider-options"><button class="provider-choice" onclick={() => chooseProvider('microsoft-graph')}><span class="provider-mark"><svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="7.5" height="7.5" rx="1.6"/><rect x="10.5" y="2" width="7.5" height="7.5" rx="1.6"/><rect x="2" y="10.5" width="7.5" height="7.5" rx="1.6"/><rect x="10.5" y="10.5" width="7.5" height="7.5" rx="1.6"/></svg></span><strong>{t('setup.providerMs')}</strong><small>{t('setup.msLogin')}</small></button><button class="provider-choice" onclick={() => chooseProvider('imap')}><span class="provider-mark"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="16" height="12" rx="2.5"/><path d="M3.5 6.5 10 11l6.5-4.5"/></svg></span><strong>IMAP</strong><small>{t('setup.imapDesc')}</small></button><button class="provider-choice" onclick={() => chooseProvider('pop3')}><span class="provider-mark"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3.5" width="12.5" height="9.5" rx="2"/><path d="M3.5 5.5 8.25 9l4.75-3.5"/><path d="M16 8.5v7M13.5 13l2.5 2.5 2.5-2.5"/></svg></span><strong>POP3</strong><small>{t('setup.pop3Desc')}</small></button></div><p class="setup-note">{t('setup.note')}</p>{:else}<form class="account-form" onsubmit={saveAccount}><button type="button" class="back-link" onclick={() => setupStep = 'provider'}>{t('setup.changeType')}</button><div class="provider-badge">{#if setup.provider === 'microsoft-graph'}<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="7.5" height="7.5" rx="1.6"/><rect x="10.5" y="2" width="7.5" height="7.5" rx="1.6"/><rect x="2" y="10.5" width="7.5" height="7.5" rx="1.6"/><rect x="10.5" y="10.5" width="7.5" height="7.5" rx="1.6"/></svg>{t('setup.badgeMs')}{:else if setup.provider === 'imap'}<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="16" height="12" rx="2.5"/><path d="M3.5 6.5 10 11l6.5-4.5"/></svg>IMAP · {t('setup.badgeManual')}{:else}<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3.5" width="12.5" height="9.5" rx="2"/><path d="M3.5 5.5 8.25 9l4.75-3.5"/><path d="M16 8.5v7M13.5 13l2.5 2.5 2.5-2.5"/></svg>POP3 · {t('setup.badgeManual')}{/if}</div><div class="setup-grid"><label>{t('setup.displayName')}<input bind:value={setup.displayName} placeholder="Mi cuenta personal"/></label><label>{t('setup.email')}<input type="email" bind:value={setup.emailAddress} placeholder="nombre@ejemplo.com" required onblur={applySuggestions}/></label></div>{#if setup.provider !== 'microsoft-graph'}<div class="server-block"><h3>{t('setup.incomingServer', { provider: setup.provider.toUpperCase() })}</h3><div class="server-fields"><label>{t('setup.server')}<input bind:value={setup.incoming.host} placeholder="imap.ejemplo.com" required/></label><label>{t('setup.port')}<input type="number" bind:value={setup.incoming.port} required/></label></div><label>{t('setup.security')}<select bind:value={setup.incoming.security}><option value="tls">TLS</option><option value="starttls">STARTTLS</option></select></label><h3>{t('setup.outgoing')}</h3><div class="server-fields"><label>{t('setup.server')}<input bind:value={setup.outgoing!.host} placeholder="smtp.ejemplo.com" required/></label><label>{t('setup.port')}<input type="number" bind:value={setup.outgoing!.port} required/></label></div><label>{t('setup.security')}<select bind:value={setup.outgoing!.security}><option value="tls">TLS</option><option value="starttls">STARTTLS</option></select></label></div><div class="setup-grid"><label>{t('setup.user')}<input bind:value={setup.incoming.username} placeholder="Normalmente tu dirección de correo"/></label><label>{t('setup.password')}<input type="password" bind:value={setup.secret} autocomplete="new-password" placeholder={t('setup.passwordPlaceholder')}/></label></div><p class="security-hint">{t('setup.passwordHint')}</p>{:else}<div class="oauth-explainer"><span><svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="7.5" height="7.5" rx="1.6"/><rect x="10.5" y="2" width="7.5" height="7.5" rx="1.6"/><rect x="2" y="10.5" width="7.5" height="7.5" rx="1.6"/><rect x="10.5" y="10.5" width="7.5" height="7.5" rx="1.6"/></svg></span><div><strong>{t('setup.secureLogin')}</strong><p>{t('setup.msOauthExplainer')}</p><label>Client ID de Microsoft Entra ID<input bind:value={microsoftClientId} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"/></label><button type="button" class="oauth-button" onclick={startMicrosoftLogin} disabled={oauthBusy}>{oauthBusy ? t('common.loading') : t('setup.msLoginButton')}</button></div></div>{/if}{#if setupError}<p class="setup-error">{setupError}</p>{/if}{#if setupInfo}<p class="setup-message">{setupInfo}</p>{/if}<footer class="setup-footer"><button type="button" class="cancel-setup" onclick={() => setupStep = 'provider'}>{t('setup.changeType')}</button>{#if setup.provider === 'imap' || setup.provider === 'pop3'}<button type="button" class="cancel-setup" onclick={testConnection} disabled={testingConnection}>{testingConnection ? t('common.loading') : t('setup.testConnection')}</button>{/if}<button type="button" class="cancel-setup" onclick={() => setupOpen = false}>{t('common.cancel')}</button><button class="setup-submit" type="submit">{setup.provider === 'microsoft-graph' ? t('setup.msContinue') : t('setup.addAccount')}</button></footer></form>{/if}</div></section></div>{/if}
 
-{#if settingsOpen}<div class="modal-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) settingsOpen = false; }}><div class="setup-window settings-window" role="dialog" aria-modal="true" aria-label={t('settings.title')}><aside class="setup-brand"><div class="setup-brand-mark"><svg width="22" height="19" viewBox="0 0 24 20" fill="none" aria-hidden="true"><path d="M3 5.5 12 12l9-6.5" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><span class="setup-brand-name">e-meil</span><p class="setup-brand-tagline">{t('settings.title')}</p><ol class="settings-nav"><li><a href="#settings-accounts">{t('settings.accounts')}</a></li><li><a href="#settings-sync">{t('settings.sync')}</a></li><li><a href="#settings-compose">{t('settings.composeTitle')}</a></li><li><a href="#settings-appearance">{t('settings.appearance')}</a></li><li><a href="#settings-data">{t('settings.dataTitle')}</a></li><li><a href="#settings-about">{t('settings.about')}</a></li></ol><span class="setup-brand-version">v0.1.0 · MIT</span></aside><div class="setup-main"><header class="setup-header"><div><span class="setup-kicker">e-MEIL</span><h2>{t('settings.title')}</h2><p>{t('settings.subtitle')}</p></div><button class="setup-close" type="button" onclick={() => settingsOpen = false} aria-label={t('common.close')}>×</button></header><div class="settings-body">
+{#if settingsOpen}<div class="modal-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) settingsOpen = false; }}><div class="setup-window settings-window" role="dialog" aria-modal="true" aria-label={t('settings.title')}><aside class="setup-brand"><div class="setup-brand-mark"><svg width="22" height="19" viewBox="0 0 24 20" fill="none" aria-hidden="true"><path d="M3 5.5 12 12l9-6.5" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><span class="setup-brand-name">e-meil</span><p class="setup-brand-tagline">{t('settings.title')}</p><ol class="settings-nav"><li><a href="#settings-accounts">{t('settings.accounts')}</a></li><li><a href="#settings-sync">{t('settings.sync')}</a></li><li><a href="#settings-compose">{t('settings.composeTitle')}</a></li><li><a href="#settings-appearance">{t('settings.appearance')}</a></li><li><a href="#settings-rules">{t('settings.rulesTitle')}</a></li><li><a href="#settings-data">{t('settings.dataTitle')}</a></li><li><a href="#settings-about">{t('settings.about')}</a></li></ol><span class="setup-brand-version">v0.1.0 · MIT</span></aside><div class="setup-main"><header class="setup-header"><div><span class="setup-kicker">e-MEIL</span><h2>{t('settings.title')}</h2><p>{t('settings.subtitle')}</p></div><button class="setup-close" type="button" onclick={() => settingsOpen = false} aria-label={t('common.close')}>×</button></header><div class="settings-body">
           {#if settingsNotice}<div class="sync-banner">{settingsNotice}<button class="search-exit" type="button" onclick={() => settingsNotice = ''}>OK</button></div>{/if}
           <div class="settings-card" id="settings-accounts">
             <h3>{t('settings.accounts')}</h3>
@@ -1181,7 +1223,51 @@ import { getLocale, initLocale, setLocale, t, type Locale } from './lib/i18n';
               </select>
             </label>
           </div>
-          <div class="settings-card" id="settings-data">
+          
+          <div class="settings-card" id="settings-rules">
+            <h3>{t('settings.rulesTitle')}</h3>
+            <p class="settings-hint">{t('settings.rulesHint')}</p>
+            {#each rules as rule, rindex (rule.id)}
+              <div class="rule-card">
+                <div class="rule-header">
+                  <label class="rule-toggle"><input type="checkbox" bind:checked={rule.enabled} /> {rule.name || t('settings.ruleUntitled')}</label>
+                  <div class="rule-actions">
+                    <button class="btn-secondary settings-danger" onclick={() => { rules = rules.filter((r,i)=> i!==rindex); saveRules(rules); }}>{t('common.delete')}</button>
+                  </div>
+                </div>
+                <div class="rule-grid">
+                  <label class="settings-column">{t('settings.ruleName')}<input bind:value={rule.name} /></label>
+                  <label class="settings-row"><input type="checkbox" bind:checked={rule.matchAll} /> {rule.matchAll ? t('settings.ruleMatchAll') : t('settings.ruleMatchAny')}</label>
+                </div>
+                <div class="rule-section">
+                  <div class="rule-section-head"><span>{t('settings.ruleConditions')}</span><button class="btn-secondary" onclick={() => { rule.conditions = [...rule.conditions, {field:'from', op:'contains', value:''}]; rules = [...rules]; }}>+</button></div>
+                  {#each rule.conditions as cond, cindex}
+                    <div class="rule-row">
+                      <select bind:value={cond.field}><option value="from">{t('settings.ruleFieldFrom')}</option><option value="to">{t('settings.ruleFieldTo')}</option><option value="subject">{t('settings.ruleFieldSubject')}</option><option value="body">{t('settings.ruleFieldBody')}</option></select>
+                      <select bind:value={cond.op}><option value="contains">{t('settings.ruleOpContains')}</option><option value="notContains">{t('settings.ruleOpNotContains')}</option><option value="equals">{t('settings.ruleOpEquals')}</option><option value="startsWith">{t('settings.ruleOpStartsWith')}</option><option value="endsWith">{t('settings.ruleOpEndsWith')}</option></select>
+                      <input bind:value={cond.value} placeholder={t('settings.ruleValue')} />
+                      <button class="btn-secondary" onclick={() => { rule.conditions = rule.conditions.filter((_,i)=>i!==cindex); rules=[...rules]; }}>×</button>
+                    </div>
+                  {/each}
+                </div>
+                <div class="rule-section">
+                  <div class="rule-section-head"><span>{t('settings.ruleActions')}</span><button class="btn-secondary" onclick={() => { rule.actions = [...rule.actions, {type:'markRead'}]; rules=[...rules]; }}>+</button></div>
+                  {#each rule.actions as act, aindex}
+                    <div class="rule-row">
+                      <select bind:value={act.type}><option value="markRead">{t('settings.ruleActMarkRead')}</option><option value="star">{t('settings.ruleActStar')}</option><option value="archive">{t('settings.ruleActArchive')}</option><option value="delete">{t('settings.ruleActDelete')}</option><option value="moveTo">{t('settings.ruleActMoveTo')}</option></select>
+                      {#if act.type === 'moveTo'}<select bind:value={act.folder}>{#each syncedFolders as folder}<option value={folder.name}>{folder.name}</option>{/each}</select>{/if}
+                      <button class="btn-secondary" onclick={() => { rule.actions = rule.actions.filter((_,i)=>i!==aindex); rules=[...rules]; }}>×</button>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/each}
+            <div class="rule-footer">
+              <button class="btn-secondary" onclick={() => { const r = createEmptyRule(); rules = [...rules, r]; }}>{t('settings.ruleAdd')}</button>
+              <button class="btn-primary" onclick={() => { saveRules(rules); settingsNotice = t('settings.rulesSaved'); }}>{t('settings.rulesSave')}</button>
+            </div>
+          </div>
+<div class="settings-card" id="settings-data">
             <h3>{t('settings.dataTitle')}</h3>
             <p class="settings-hint">{t('settings.dataHint')}</p>
             <button class="btn-secondary settings-danger" onclick={resetLocalPreferences}>{t('settings.reset')}</button>
