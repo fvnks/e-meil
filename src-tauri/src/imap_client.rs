@@ -54,6 +54,7 @@ pub struct ImapMessageContent {
     pub cc_recipients: Option<String>,
     pub received_at: Option<String>,
     pub text: String,
+    pub html: Option<String>,
     pub has_attachments: bool,
     pub attachments: Vec<ImapAttachment>,
 }
@@ -104,6 +105,77 @@ fn normalize_body_text(raw: &[u8]) -> String {
     let tidy = regex::Regex::new(r"[ \t]{2,}").unwrap().replace_all(&only_text, " ");
     let collapsed = regex::Regex::new(r"\n{3,}").unwrap().replace_all(&tidy, "\n\n");
     collapsed.trim().chars().take(4000).collect()
+}
+
+/// Decodifica quoted-printable a bytes: `=XX` hex, soft break `=\n` eliminado.
+/// Se acumulan bytes y se convierten al final para respetar UTF-8 multi-octeto.
+fn decode_quoted_printable(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'=' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => { i += 2; }
+            b'=' if i + 2 < bytes.len() && bytes[i + 1].is_ascii_hexdigit() && bytes[i + 2].is_ascii_hexdigit() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("00");
+                out.push(u8::from_str_radix(hex, 16).unwrap_or(b'?'));
+                i += 3;
+            }
+            b => { out.push(b); i += 1; }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Decodifica base64 tolerante a espacios y saltos de línea; None si no es
+/// UTF-8 razonable tras decodificar (evita basura binaria en la vista HTML).
+fn decode_base64_text(input: &str) -> Option<String> {
+    let compact: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    let decoded = base64::engine::general_purpose::STANDARD.decode(&compact).ok()?;
+    let utf8 = std::str::from_utf8(&decoded).ok()?;
+    (utf8.chars().all(|c| !c.is_control() || matches!(c, '\n' | '\t'))).then(|| utf8.to_string())
+}
+
+/// Extrae la parte text/html de un cuerpo IMAP crudo (BODY[TEXT]).
+///
+/// Sin parser MIME completo: localiza el encabezado `content-type: text/html`,
+/// corta en la próxima línea de boundary, decodifica su transfer-encoding
+/// (base64/quoted-printable) y limita el tamaño. Para mensajes de una sola
+/// parte sin marcador, acepta el cuerpo completo si realmente parece HTML.
+const HTML_MAX_CHARS: usize = 200_000;
+fn extract_html_body(raw: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(raw).replace('\r', "");
+    let lower = text.to_ascii_lowercase();
+    let (content, declared_encoding) = match lower.find("content-type: text/html") {
+        Some(position) => {
+            let headers_end = lower[position..].find("\n\n").map(|p| position + p + 2)?;
+            let headers = &lower[position..headers_end];
+            let declared_encoding = if headers.contains("content-transfer-encoding: base64") { Some("base64") }
+                else if headers.contains("content-transfer-encoding: quoted-printable") { Some("qp") }
+                else { None };
+            let body = &text[headers_end..];
+            // La parte termina en la próxima línea de boundary "--" del multipart.
+            let mut end = body.len();
+            let mut offset = 0;
+            for line in body.split('\n') {
+                if offset > 0 && line.starts_with("--") { end = offset; break; }
+                offset += line.len() + 1;
+            }
+            (body[..end].trim().to_string(), declared_encoding)
+        }
+        None => (text.trim().to_string(), None),
+    };
+    if content.is_empty() { return None; }
+    let decoded = match declared_encoding {
+        Some("base64") => decode_base64_text(&content)?,
+        Some("qp") => decode_quoted_printable(&content),
+        // Sin CTE declarado: heurística base64 igual que el texto plano.
+        _ => decode_base64_text(&content).unwrap_or(content),
+    };
+    let decoded = decoded.trim().to_string();
+    if decoded.is_empty() { return None; }
+    let is_html = decoded.to_ascii_lowercase().starts_with("<!doctype") || decoded.contains('<');
+    is_html.then(|| decoded.chars().take(HTML_MAX_CHARS).collect())
 }
 
 fn validate_host(host: &str) -> Result<&str, String> {
@@ -175,12 +247,14 @@ pub fn read_imap_message(account_id: String, host: String, port: u16, security: 
         let to_recipients = envelope.and_then(|e| e.to.as_ref()).map(|list| list.iter().map(|address| format_address_parts(address.name.as_deref(), address.mailbox.as_deref(), address.host.as_deref())).filter(|formatted| formatted != "Remitente desconocido").collect::<Vec<_>>().join(", "));
         let cc_recipients = envelope.and_then(|e| e.cc.as_ref()).map(|list| list.iter().map(|address| format_address_parts(address.name.as_deref(), address.mailbox.as_deref(), address.host.as_deref())).filter(|formatted| formatted != "Remitente desconocido").collect::<Vec<_>>().join(", "));
         let received_at = envelope.and_then(|e| e.date.as_ref()).map(|d| String::from_utf8_lossy(d).trim().to_string()).filter(|d| !d.is_empty());
-        let raw_text = fetch.text().or_else(|| fetch.body()).map(|bytes| String::from_utf8_lossy(bytes).to_lowercase()).unwrap_or_default();
+        let raw_body: Vec<u8> = fetch.text().or_else(|| fetch.body()).map(|bytes| bytes.to_vec()).unwrap_or_default();
+        let raw_text = String::from_utf8_lossy(&raw_body).to_lowercase();
         let has_attachments = raw_text.contains("content-disposition: attachment") || raw_text.contains("multipart/mixed");
         let attachments = if has_attachments { vec![ImapAttachment { part: "1".into(), filename: "Adjunto detectado (descarga pendiente)".into(), content_type: "application/octet-stream".into(), size: None }] } else { Vec::new() };
-        let text = fetch.text().or_else(|| fetch.body()).map(normalize_body_text).unwrap_or_default();
+        let text = normalize_body_text(&raw_body);
+        let html = extract_html_body(&raw_body);
         session.logout().map_err(|e| format!("La sesión IMAP no pudo cerrarse limpiamente: {e}"))?;
-        Ok(ImapMessageContent { uid, subject, from, to_recipients, cc_recipients, received_at, text, has_attachments, attachments })
+        Ok(ImapMessageContent { uid, subject, from, to_recipients, cc_recipients, received_at, text, html, has_attachments, attachments })
     })
 }
 
@@ -474,5 +548,43 @@ mod tests {
         assert_eq!(format_address_parts(Some(b"Jos\xc3\xa9"), Some(b"jose"), Some(b"example.com")), "Jos\u{00e9} <jose@example.com>");
         assert_eq!(format_address_parts(None, None, Some(b"example.com")), "example.com");
         assert_eq!(format_address_parts(Some(b"  Name  "), Some(b"user"), Some(b"example.com")), "Name <user@example.com>");
+    }
+
+    #[test]
+    fn decode_quoted_printable_respeta_utf8() {
+        assert_eq!(decode_quoted_printable("Hol=C3=A1\nmundo"), "Holá\nmundo");
+        assert_eq!(decode_quoted_printable("linea=\nmultilinea"), "lineamultilinea");
+        assert_eq!(decode_quoted_printable("sin escapes"), "sin escapes");
+        // Un '=' suelto no válido sobrevive tal cual.
+        assert_eq!(decode_quoted_printable("a=2Fb=zz"), "a/b=zz");
+    }
+
+    #[test]
+    fn extract_html_body_encuentra_parte_quoted_printable() {
+        let raw = b"--b1\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHola plano\r\n--b1\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n<p>Hol=C3=A1</p>\r\n--b1--";
+        assert_eq!(extract_html_body(raw).as_deref(), Some("<p>Holá</p>"));
+    }
+
+    #[test]
+    fn extract_html_body_decodifica_base64() {
+        let b64 = base64::engine::general_purpose::STANDARD.encode("<p>Hi</p>");
+        let raw = format!("--b1\nContent-Type: text/html; charset=utf-8\nContent-Transfer-Encoding: base64\n\n{b64}\n--b1--");
+        assert_eq!(extract_html_body(raw.as_bytes()).as_deref(), Some("<p>Hi</p>"));
+    }
+
+    #[test]
+    fn extract_html_body_acepta_mensaje_simple() {
+        // Mensaje de una sola parte: el cuerpo entero ya es HTML.
+        assert_eq!(extract_html_body(b"<html><body>Hola</body></html>").as_deref(), Some("<html><body>Hola</body></html>"));
+        // Una sola parte en base64 (sin encabezado visible en BODY[TEXT]).
+        let b64 = base64::engine::general_purpose::STANDARD.encode("<p>Base64 solo</p>");
+        assert_eq!(extract_html_body(b64.as_bytes()).as_deref(), Some("<p>Base64 solo</p>"));
+    }
+
+    #[test]
+    fn extract_html_body_rechaza_texto_plano() {
+        assert_eq!(extract_html_body(b"Hola, este es un mensaje sin HTML."), None);
+        assert_eq!(extract_html_body(b"--b1\nContent-Type: text/plain\n\nSolo texto\n--b1--"), None);
+        assert_eq!(extract_html_body(b""), None);
     }
 }

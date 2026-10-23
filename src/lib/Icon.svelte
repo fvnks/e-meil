@@ -42,6 +42,7 @@
     download: '<path d="M10 3.5V12"/><path d="M6.5 8.5 10 12l3.5-3.5"/><path d="M4 13v2.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V13"/>',
     clock: '<circle cx="10" cy="10" r="7.5"/><path d="M10 6v4l2.5 2.5"/>',
     check: '<path d="M4 10.5l4 4 8-9"/>',
+    close: '<path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/>',
     save: '<path d="M4.5 3.5h10L17 6v10.5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M7 3.5V8h5V3.5"/><path d="M7 13.5h6"/>',
     send: '<path d="M17.5 3 2.5 9.5l6 2.5 2.5 6z"/><path d="M17.5 3 8.5 12"/>',
   };
