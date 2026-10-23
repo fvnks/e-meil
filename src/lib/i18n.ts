@@ -193,6 +193,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'compose.saveDraft': 'Guardar borrador',
     // Panel de configuración
     'settings.title': 'Ajustes',
+    'settings.subtitle': 'Personaliza tus cuentas, la sincronización, la firma y la apariencia.',
     'settings.accounts': 'Cuentas',
     'settings.accountsEmpty': 'No hay cuentas configuradas. Añade una para empezar a usar e-Meil.',
     'settings.active': 'en uso',
@@ -388,6 +389,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'compose.saveDraft': 'Save draft',
     // Panel de configuración
     'settings.title': 'Settings',
+    'settings.subtitle': 'Customize your accounts, sync, signature and appearance.',
     'settings.accounts': 'Accounts',
     'settings.accountsEmpty': 'No accounts configured yet. Add one to start using e-Meil.',
     'settings.active': 'in use',
