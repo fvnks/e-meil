@@ -48,7 +48,7 @@ jobs:
         run: node scripts/verify-modal-a11y.mjs http://127.0.0.1:5173/
       - name: Drawer móvil y overlays (12 comprobaciones)
         run: node scripts/verify-responsive.mjs http://127.0.0.1:5173/
-      - name: Teclado: menú APG + Escape en cascada (7 comprobaciones)
+      - name: 'Teclado: menú APG + Escape en cascada (7 comprobaciones)'
         run: node scripts/verify-keyboard.mjs http://127.0.0.1:5173/
       - name: Benchmark de rendimiento con presupuestos
         run: pnpm run test:performance http://127.0.0.1:5173/
