@@ -61,6 +61,13 @@ pub async fn install_app_update(app: AppHandle, pending: tauri::State<'_, Pendin
     Ok(())
 }
 
+/// Descarta la actualización pendiente sin instalarla.
+#[tauri::command]
+pub async fn dismiss_app_update(pending: tauri::State<'_, PendingUpdate>) -> Result<(), String> {
+    *pending.0.lock().map_err(|_| "No se pudo registrar la actualización".to_string())? = None;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

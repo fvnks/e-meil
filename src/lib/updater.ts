@@ -18,3 +18,9 @@ export async function installAppUpdate(): Promise<void> {
   if (!isTauri()) throw new Error('El actualizador solo está disponible en la aplicación de escritorio.');
   await invoke('install_app_update');
 }
+
+/** Descarta la actualización pendiente sin instalarla. */
+export async function dismissAppUpdate(): Promise<void> {
+  if (!isTauri()) throw new Error('El actualizador solo está disponible en la aplicación de escritorio.');
+  await invoke('dismiss_app_update');
+}

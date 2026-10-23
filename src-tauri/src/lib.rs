@@ -63,7 +63,8 @@ pub fn run() {
             graph_send::create_graph_draft,
             tray::set_tray_badge,
             updater::check_app_update,
-            updater::install_app_update
+            updater::install_app_update,
+            updater::dismiss_app_update,
         ])
         .setup(|app| {
             // Ícono de bandeja con menú (Abrir / Redactar / Sincronizar / Salir).
