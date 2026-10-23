@@ -106,6 +106,18 @@
 .help-shortcuts ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
 .help-shortcuts li{font-size:11px;color:var(--ink);display:flex;align-items:center;gap:8px}
 .help-shortcuts kbd{font-size:9px;background:var(--surface-input);border:1px solid var(--line);border-radius:4px;padding:2px 6px;white-space:nowrap;flex:none}
+/* --- Snooze + HTML + bandeja unificada --- */
+.snooze-wrap{position:relative}
+.snooze-menu{right:auto;left:0;width:120px}
+.snooze-btn{color:var(--muted)}
+.html-view{font-size:12px;line-height:1.65;color:var(--ink);padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow-x:auto;max-height:400px;overflow-y:auto}
+.html-view img{filter:grayscale(1);opacity:.3}
+.html-view a{color:var(--accent-ink)}
+.html-toggle{margin-top:8px}
+.list-header-actions{display:flex;align-items:center;gap:10px}
+.unified-toggle{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer;white-space:nowrap}
+.unified-toggle input{accent-color:var(--accent)}
+.unified-chip{font-size:10px;color:var(--accent-ink);background:var(--accent-soft);border-radius:4px;padding:2px 7px;margin-left:6px;font-weight:600;vertical-align:2px}
 /* --- Responsive móvil: drawer de carpetas (tarea 3) --- */
 .menu-button{display:none;border:0;background:transparent;width:34px;height:34px;border-radius:6px;place-items:center;gap:3px;padding:0 8px;cursor:pointer}
 .menu-button .menu-icon{display:block;width:15px;height:2px;border-radius:2px;background:var(--ink)}

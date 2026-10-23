@@ -39,6 +39,7 @@
     undo: '<path d="M8 5.5 4 9.5l4 4"/><path d="M4 9.5h7.5a4.5 4.5 0 0 1 4.5 4.5v1"/>',
     redo: '<path d="M12 5.5l4 4-4 4"/><path d="M16 9.5H8.5A4.5 4.5 0 0 0 4 14v1"/>',
     download: '<path d="M10 3.5V12"/><path d="M6.5 8.5 10 12l3.5-3.5"/><path d="M4 13v2.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V13"/>',
+    clock: '<circle cx="10" cy="10" r="7.5"/><path d="M10 6v4l2.5 2.5"/>',
     check: '<path d="M4 10.5l4 4 8-9"/>',
     save: '<path d="M4.5 3.5h10L17 6v10.5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M7 3.5V8h5V3.5"/><path d="M7 13.5h6"/>',
     send: '<path d="M17.5 3 2.5 9.5l6 2.5 2.5 6z"/><path d="M17.5 3 8.5 12"/>',

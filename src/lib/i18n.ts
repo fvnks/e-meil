@@ -238,7 +238,16 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'help.closePopups': 'Cerrar menús y ventanas emergentes',
     'help.tray': 'Clic en el ícono de bandeja para mostrar e-Meil; el menú contextual permite Redactar y Sincronizar.',
     'help.mailto': 'Los enlaces mailto: del sistema abren e-Meil con el mensaje precargado.',
-    'help.sortTip': 'El botón de ordenar la lista ofrece fecha, remitente y no leídos.'
+    'help.sortTip': 'El botón de ordenar la lista ofrece fecha, remitente y no leídos.',
+    // Snooze + HTML + bandeja unificada
+    'snooze.title': 'Posponer',
+    'snooze.1h': '1 hora',
+    'snooze.3h': '3 horas',
+    'snooze.tomorrow': 'Mañana',
+    'reading.viewHtml': 'Ver HTML',
+    'reading.viewText': 'Ver texto plano',
+    'list.unified': '· todas las cuentas',
+    'list.unifiedLabel': 'Bandeja unificada'
   },
   en: {
     // Barra de aplicaciones
@@ -451,7 +460,15 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'help.closePopups': 'Close menus and popups',
     'help.tray': 'Click the tray icon to show e-Meil; its menu offers Compose and Sync.',
     'help.mailto': 'System mailto: links open e-Meil with the message pre-filled.',
-    'help.sortTip': 'The sort button offers date, sender and unread ordering.'
+    'help.sortTip': 'The sort button offers date, sender and unread ordering.',
+    'snooze.title': 'Snooze',
+    'snooze.1h': '1 hour',
+    'snooze.3h': '3 hours',
+    'snooze.tomorrow': 'Tomorrow',
+    'reading.viewHtml': 'View HTML',
+    'reading.viewText': 'View plain text',
+    'list.unified': '· all accounts',
+    'list.unifiedLabel': 'Unified inbox'
   }
 };
 
