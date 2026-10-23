@@ -278,6 +278,26 @@ pub async fn start_microsoft_oauth_window(app: tauri::AppHandle, state: tauri::S
         }
     });
     let _ = window.set_focus();
+    // WebView2 (Windows) no dispara `on_navigation` con las redirecciones 302
+    // de Microsoft: el `code` aterriza en la página de aviso de Edge y el
+    // sondeo esperaría para siempre. Este vigilante consulta la URL vigente
+    // de la ventana cada 250 ms y captura el código aunque el handler de
+    // navegación no llegue a enterarse.
+    let watch_handle = app.clone();
+    let watch_shared = state.0.clone();
+    let watch_window = window.clone();
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + CALLBACK_DEADLINE;
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(250));
+            // Un error al leer la URL significa que la ventana ya no existe.
+            let Ok(current) = watch_window.url() else { return };
+            if !current.as_str().starts_with(MS_NATIVE_REDIRECT) { continue; }
+            store_native_redirect(&current, &watch_shared);
+            if let Some(window) = watch_handle.get_webview_window(MS_LOGIN_LABEL) { let _ = window.close(); }
+            return;
+        }
+    });
     Ok(OAuthStart { authorization_url, state: oauth_state, redirect_uri: MS_NATIVE_REDIRECT.into() })
 }
 
