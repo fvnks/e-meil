@@ -248,7 +248,7 @@ pub async fn start_microsoft_oauth_window(app: tauri::AppHandle, state: tauri::S
     let close_state = oauth_state.clone();
     let app_handle = app.clone();
     let url = tauri::Url::parse(&authorization_url).map_err(|e| format!("URL de autorización inválida: {e}"))?;
-    let window = WebviewWindowBuilder::new(&app, MS_LOGIN_LABEL, WebviewUrl::External(url))
+    let window = WebviewWindowBuilder::new(&app, MS_LOGIN_LABEL, WebviewUrl::Internal(url))
         .title("Microsoft")
         .inner_size(520.0, 720.0)
         .min_inner_size(420.0, 560.0)
