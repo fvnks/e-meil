@@ -48,6 +48,8 @@ pub struct ImapMessageContent {
     pub uid: u32,
     pub subject: String,
     pub from: String,
+    pub to_recipients: Option<String>,
+    pub cc_recipients: Option<String>,
     pub received_at: Option<String>,
     pub text: String,
     pub has_attachments: bool,
@@ -168,13 +170,15 @@ pub fn read_imap_message(account_id: String, host: String, port: u16, security: 
         let envelope = fetch.envelope();
         let subject = envelope.and_then(|e| e.subject.as_ref()).map(|s| String::from_utf8_lossy(s).trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "(sin asunto)".into());
         let from = envelope.and_then(|e| e.from.as_ref().and_then(|addresses| addresses.first())).map(|address| format_address_parts(address.name.as_deref(), address.mailbox.as_deref(), address.host.as_deref())).unwrap_or_else(|| "Remitente desconocido".into());
+        let to_recipients = envelope.and_then(|e| e.to.as_ref()).map(|list| list.iter().map(|address| format_address_parts(address.name.as_deref(), address.mailbox.as_deref(), address.host.as_deref())).filter(|formatted| formatted != "Remitente desconocido").collect::<Vec<_>>().join(", "));
+        let cc_recipients = envelope.and_then(|e| e.cc.as_ref()).map(|list| list.iter().map(|address| format_address_parts(address.name.as_deref(), address.mailbox.as_deref(), address.host.as_deref())).filter(|formatted| formatted != "Remitente desconocido").collect::<Vec<_>>().join(", "));
         let received_at = envelope.and_then(|e| e.date.as_ref()).map(|d| String::from_utf8_lossy(d).trim().to_string()).filter(|d| !d.is_empty());
         let raw_text = fetch.text().or_else(|| fetch.body()).map(|bytes| String::from_utf8_lossy(bytes).to_lowercase()).unwrap_or_default();
         let has_attachments = raw_text.contains("content-disposition: attachment") || raw_text.contains("multipart/mixed");
         let attachments = if has_attachments { vec![ImapAttachment { part: "1".into(), filename: "Adjunto detectado (descarga pendiente)".into(), content_type: "application/octet-stream".into(), size: None }] } else { Vec::new() };
         let text = fetch.text().or_else(|| fetch.body()).map(normalize_body_text).unwrap_or_default();
         session.logout().map_err(|e| format!("La sesión IMAP no pudo cerrarse limpiamente: {e}"))?;
-        Ok(ImapMessageContent { uid, subject, from, received_at, text, has_attachments, attachments })
+        Ok(ImapMessageContent { uid, subject, from, to_recipients, cc_recipients, received_at, text, has_attachments, attachments })
     })
 }
 

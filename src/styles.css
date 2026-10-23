@@ -88,6 +88,24 @@
 .settings-themes{gap:8px}
 .settings-themes .theme-swatch{width:20px;height:20px;cursor:pointer;border:0;padding:0}
 .settings-themes .theme-selected{outline:2px solid var(--accent);outline-offset:2px}
+/* --- Redacción completa + botones honestos --- */
+.reply-button.reply-all{border-style:dashed}
+.reply-button.reply-all b{font-size:10px;font-weight:800;margin:0 1px 0 -3px}
+.sort-wrap{position:relative}
+.sort-menu{position:absolute;top:32px;right:0;z-index:12;width:150px;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:5px;box-shadow:0 12px 36px #0003;display:flex;flex-direction:column;gap:2px;animation:panel-enter .15s ease both}
+.sort-menu button{border:0;background:none;text-align:left;padding:7px 9px;border-radius:5px;font-size:11px;color:var(--ink);cursor:pointer}
+.sort-menu button:hover{background:var(--accent-soft)}
+.sort-menu button.sort-selected{font-weight:600;color:var(--accent-ink)}
+.compose-field{position:relative}
+.suggest-list{position:absolute;top:38px;left:0;right:0;z-index:12;background:var(--paper);border:1px solid var(--line);border-radius:8px;box-shadow:0 12px 36px #0003;display:flex;flex-direction:column;gap:1px;padding:4px;animation:panel-enter .15s ease both}
+.suggest-list button{border:0;background:none;display:flex;flex-direction:column;gap:1px;text-align:left;padding:6px 9px;border-radius:5px;cursor:pointer}
+.suggest-list button:hover,.suggest-list .suggest-active{background:var(--accent-soft)}
+.suggest-list strong{font-size:10.5px;color:var(--ink);font-weight:600}
+.suggest-list span{font-size:9.5px;color:var(--muted)}
+.help-shortcuts h4{margin:12px 0 6px;font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--muted)}
+.help-shortcuts ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.help-shortcuts li{font-size:11px;color:var(--ink);display:flex;align-items:center;gap:8px}
+.help-shortcuts kbd{font-size:9px;background:var(--surface-input);border:1px solid var(--line);border-radius:4px;padding:2px 6px;white-space:nowrap;flex:none}
 /* --- Responsive móvil: drawer de carpetas (tarea 3) --- */
 .menu-button{display:none;border:0;background:transparent;width:34px;height:34px;border-radius:6px;place-items:center;gap:3px;padding:0 8px;cursor:pointer}
 .menu-button .menu-icon{display:block;width:15px;height:2px;border-radius:2px;background:var(--ink)}

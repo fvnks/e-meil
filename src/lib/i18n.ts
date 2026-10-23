@@ -220,7 +220,25 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'settings.resetConfirm': '¿Restablecer las preferencias locales? La vista se recargará.',
     'settings.saved': 'Ajuste guardado.',
     'settings.about': 'Acerca de',
-    'settings.aboutHint': 'Cliente de correo de escritorio open source para Windows y Linux.'
+    'settings.aboutHint': 'Cliente de correo de escritorio open source para Windows y Linux.',
+    // Redacción completa + botones honestos
+    'compose.replyAll': 'Responder a todos',
+    'compose.autosaved': 'Borrador autoguardado.',
+    'sort.dateDesc': 'Más recientes primero',
+    'sort.dateAsc': 'Más antiguos primero',
+    'sort.sender': 'Por remitente (A-Z)',
+    'sort.unread': 'No leídos primero',
+    'help.title': 'Ayuda y atajos',
+    'help.sectionKeys': 'Atajos de teclado',
+    'help.sectionMouse': 'Consejos',
+    'help.newMail': 'Redactar mensaje',
+    'help.search': 'Ir al buscador',
+    'help.reply': 'Responder al mensaje activo',
+    'help.views': 'Correo / Calendario / Contactos / Ajustes',
+    'help.closePopups': 'Cerrar menús y ventanas emergentes',
+    'help.tray': 'Clic en el ícono de bandeja para mostrar e-Meil; el menú contextual permite Redactar y Sincronizar.',
+    'help.mailto': 'Los enlaces mailto: del sistema abren e-Meil con el mensaje precargado.',
+    'help.sortTip': 'El botón de ordenar la lista ofrece fecha, remitente y no leídos.'
   },
   en: {
     // Barra de aplicaciones
@@ -416,7 +434,24 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'settings.resetConfirm': 'Reset local preferences? The view will reload.',
     'settings.saved': 'Setting saved.',
     'settings.about': 'About',
-    'settings.aboutHint': 'Open source desktop email client for Windows and Linux.'
+    'settings.aboutHint': 'Open source desktop email client for Windows and Linux.',
+    'compose.replyAll': 'Reply all',
+    'compose.autosaved': 'Draft autosaved.',
+    'sort.dateDesc': 'Newest first',
+    'sort.dateAsc': 'Oldest first',
+    'sort.sender': 'By sender (A-Z)',
+    'sort.unread': 'Unread first',
+    'help.title': 'Help & shortcuts',
+    'help.sectionKeys': 'Keyboard shortcuts',
+    'help.sectionMouse': 'Tips',
+    'help.newMail': 'Compose message',
+    'help.search': 'Go to search',
+    'help.reply': 'Reply to active message',
+    'help.views': 'Mail / Calendar / Contacts / Settings',
+    'help.closePopups': 'Close menus and popups',
+    'help.tray': 'Click the tray icon to show e-Meil; its menu offers Compose and Sync.',
+    'help.mailto': 'System mailto: links open e-Meil with the message pre-filled.',
+    'help.sortTip': 'The sort button offers date, sender and unread ordering.'
   }
 };
 
