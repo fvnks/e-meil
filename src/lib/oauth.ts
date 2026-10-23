@@ -18,6 +18,18 @@ export async function startMicrosoftOAuth(clientId: string, tenant = 'common'): 
   return invoke<OAuthStart>('start_microsoft_oauth', { clientId, tenant });
 }
 
+/**
+ * Abre la ventana de inicio de sesión de Microsoft dentro de e-Meil.
+ *
+ * Es el flujo recomendado: no requiere Client ID visible ni servidor local,
+ * porque la redirección nativa se intercepta en la propia ventana y el código
+ * se canjea en segundo plano con PKCE. La ventana se cierra sola al terminar.
+ */
+export async function startMicrosoftLoginWindow(clientId: string, tenant = 'common'): Promise<OAuthStart> {
+  if (!isTauri()) throw new Error('El inicio de sesión Microsoft solo está disponible en la aplicación de escritorio.');
+  return invoke<OAuthStart>('start_microsoft_oauth_window', { clientId, tenant });
+}
+
 export async function pollMicrosoftOAuth(clientId: string, tenant: string, state: string): Promise<OAuthStatus> {
   if (!isTauri()) throw new Error('OAuth solo está disponible en escritorio.');
   return invoke('poll_microsoft_oauth', { clientId, tenant, oauthState: state });

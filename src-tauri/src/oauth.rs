@@ -17,10 +17,21 @@ const CALLBACK_DEADLINE: Duration = Duration::from_secs(600);
 const CALLBACK_OK: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\"><title>e-Meil</title></head><body style=\"font-family:system-ui,sans-serif;display:grid;place-items:center;height:100vh;margin:0\"><p>✔ Autorización recibida. Puedes cerrar esta ventana y volver a e-Meil.</p></body></html>";
 const CALLBACK_SKIP: &str = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n";
 
+/// Permisos que pide e-Meil: leer y organizar correo, enviarlo y mantener la
+/// sesión con un refresh token.
+const MS_SCOPES: &str = "openid profile email offline_access Mail.ReadWrite Mail.Send";
+/// Redirección del flujo clásico con navegador externo y servidor local.
+const MS_LOOPBACK_REDIRECT: &str = "http://127.0.0.1:43821/oauth/callback";
+/// Redirección nativa que Microsoft devuelve a la ventana embebida. La ventana
+/// intercepta la navegación antes de que la página de error llegue a cargarse.
+const MS_NATIVE_REDIRECT: &str = "https://login.microsoftonline.com/common/oauth2/nativeclient";
+const MS_NATIVE_REDIRECT_ENCODED: &str = "https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient";
+const MS_LOGIN_LABEL: &str = "ms-login";
+
 #[derive(Default)]
 pub(crate) struct OAuthState(pub(crate) Arc<Mutex<HashMap<String, PendingOAuth>>>);
 
-pub(crate) struct PendingOAuth { verifier: String, code: Option<String> }
+pub(crate) struct PendingOAuth { verifier: String, code: Option<String>, redirect_uri: String, error: Option<String> }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,15 +50,91 @@ pub async fn start_microsoft_oauth(app: tauri::AppHandle, state: tauri::State<'_
     let verifier: String = rand::thread_rng().sample_iter(&Alphanumeric).take(64).map(char::from).collect();
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let oauth_state: String = rand::thread_rng().sample_iter(&Alphanumeric).take(32).map(char::from).collect();
-    state.0.lock().map_err(|_| "No se pudo preparar OAuth".to_string())?.insert(oauth_state.clone(), PendingOAuth { verifier, code: None });
-    let redirect_uri = "http://127.0.0.1:43821/oauth/callback";
-    let authorization_url = format!("https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?client_id={client_id}&response_type=code&redirect_uri={redirect_uri}&response_mode=query&scope=openid%20profile%20email%20offline_access%20Mail.Read%20Mail.Send&state={oauth_state}&code_challenge={challenge}&code_challenge_method=S256");
+    state.0.lock().map_err(|_| "No se pudo preparar OAuth".to_string())?.insert(oauth_state.clone(), PendingOAuth { verifier, code: None, redirect_uri: MS_LOOPBACK_REDIRECT.into(), error: None });
+    let redirect_uri = MS_LOOPBACK_REDIRECT;
+    let authorization_url = format!("https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?client_id={client_id}&response_type=code&redirect_uri={redirect_uri}&response_mode=query&scope={scope}&state={oauth_state}&code_challenge={challenge}&code_challenge_method=S256", scope = MS_SCOPES.replace(' ', "%20"));
     let listener = TcpListener::bind("127.0.0.1:43821").map_err(|e| format!("No se pudo iniciar callback OAuth local: {e}"))?;
     listener.set_nonblocking(true).map_err(|e| format!("Callback OAuth local no acepta conexiones: {e}"))?;
     let shared = state.0.clone();
     std::thread::spawn(move || serve_callback(listener, shared));
     app.opener().open_url(authorization_url.clone(), None::<String>).map_err(|e| format!("No se pudo abrir el navegador externo: {e}"))?;
     Ok(OAuthStart { authorization_url, state: oauth_state, redirect_uri: redirect_uri.into() })
+}
+
+/// Inicia sesión con Microsoft en una ventana propia de e-Meil.
+///
+/// Es el flujo que usa la interfaz: no pide Client ID, no abre el navegador
+/// externo y no necesita un puerto local. La ventana intercepta la redirección
+/// nativa, guarda el `code` con su `state` y se cierra sola; el sondeo de
+/// `poll_microsoft_oauth` completa el canje con PKCE.
+#[tauri::command]
+pub async fn start_microsoft_oauth_window(app: tauri::AppHandle, state: tauri::State<'_, OAuthState>, client_id: String, tenant: String) -> Result<OAuthStart, String> {
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+    let client_id = client_id.trim().to_string();
+    if client_id.is_empty() { return Err("No hay una identidad OAuth de Microsoft configurada.".into()); }
+    let tenant = if tenant.trim().is_empty() { "common".to_string() } else { tenant.trim().to_string() };
+    let verifier: String = rand::thread_rng().sample_iter(&Alphanumeric).take(64).map(char::from).collect();
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let oauth_state: String = rand::thread_rng().sample_iter(&Alphanumeric).take(32).map(char::from).collect();
+    state.0.lock().map_err(|_| "No se pudo preparar OAuth".to_string())?.insert(oauth_state.clone(), PendingOAuth { verifier, code: None, redirect_uri: MS_NATIVE_REDIRECT.into(), error: None });
+    let authorization_url = format!(
+        "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?client_id={client_id}&response_type=code&redirect_uri={MS_NATIVE_REDIRECT_ENCODED}&response_mode=query&scope={scope}&state={oauth_state}&code_challenge={challenge}&code_challenge_method=S256&prompt=select_account",
+        scope = MS_SCOPES.replace(' ', "%20")
+    );
+    if let Some(existing) = app.get_webview_window(MS_LOGIN_LABEL) { let _ = existing.close(); }
+    let shared = state.0.clone();
+    let close_guard = state.0.clone();
+    let close_state = oauth_state.clone();
+    let app_handle = app.clone();
+    let url = tauri::Url::parse(&authorization_url).map_err(|e| format!("URL de autorización inválida: {e}"))?;
+    let window = WebviewWindowBuilder::new(&app, MS_LOGIN_LABEL, WebviewUrl::External(url))
+        .title("Microsoft")
+        .inner_size(520.0, 720.0)
+        .min_inner_size(420.0, 560.0)
+        .center()
+        .resizable(true)
+        .on_navigation(move |navigation| {
+            if navigation.as_str().starts_with(MS_NATIVE_REDIRECT) {
+                store_native_redirect(navigation, &shared);
+                if let Some(window) = app_handle.get_webview_window(MS_LOGIN_LABEL) { let _ = window.close(); }
+                return false;
+            }
+            true
+        })
+        .build()
+        .map_err(|e| format!("No se pudo abrir la ventana de inicio de sesión de Microsoft: {e}"))?;
+    // Si la persona cierra la ventana sin terminar, el sondeo no espera cinco
+    // minutos: se marca el intento como cancelado y la interfaz lo informa.
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            if let Ok(mut pending) = close_guard.lock() {
+                if let Some(item) = pending.get_mut(&close_state) {
+                    if item.code.is_none() && item.error.is_none() {
+                        item.error = Some("Se cerró la ventana de Microsoft antes de completar el inicio de sesión.".into());
+                    }
+                }
+            }
+        }
+    });
+    let _ = window.set_focus();
+    Ok(OAuthStart { authorization_url, state: oauth_state, redirect_uri: MS_NATIVE_REDIRECT.into() })
+}
+
+/// Guarda el resultado de la redirección nativa (código o error) en el intento
+/// cuyo `state` coincide. La descripción del error se conserva para mostrarla.
+fn store_native_redirect(url: &tauri::Url, shared: &Arc<Mutex<HashMap<String, PendingOAuth>>>) {
+    let values: HashMap<_, _> = url.query().unwrap_or("").split('&').filter_map(|pair| pair.split_once('=')).collect();
+    let Some(received_state) = values.get("state") else { return; };
+    let Ok(mut pending) = shared.lock() else { return; };
+    let Some(item) = pending.get_mut(*received_state) else { return; };
+    if let Some(error) = values.get("error") {
+        item.error = Some(format!("Microsoft rechazó el inicio de sesión: {error}"));
+        return;
+    }
+    if item.code.is_none() {
+        if let Some(code) = values.get("code") { item.code = Some((*code).to_string()); }
+    }
 }
 
 /// Acepta conexiones del navegador hasta recibir un `code` cuyo `state`
@@ -99,12 +186,19 @@ pub async fn poll_microsoft_oauth(state: tauri::State<'_, OAuthState>, client_id
     // El canje de tokens y la consulta del perfil son llamadas de red bloqueantes:
     // se ejecutan fuera del hilo principal para no congelar la interfaz.
     tauri::async_runtime::spawn_blocking(move || -> Result<OAuthPoll, String> {
-        let entry = shared.lock().map_err(|_| "No se pudo leer OAuth".to_string())?.get(&oauth_state).map(|item| (item.verifier.clone(), item.code.clone()));
-        let Some((verifier, Some(code))) = entry else {
+        let entry = shared.lock().map_err(|_| "No se pudo leer OAuth".to_string())?.get(&oauth_state).map(|item| (item.verifier.clone(), item.code.clone(), item.redirect_uri.clone(), item.error.clone()));
+        let Some((verifier, code, redirect_uri, error)) = entry else {
+            return Ok(OAuthPoll { status: "pending".into(), email: None, message: "Esperando la autorización de Microsoft…".into() });
+        };
+        if let Some(error) = error {
+            shared.lock().ok().map(|mut map| map.remove(&oauth_state));
+            return Ok(OAuthPoll { status: "error".into(), email: None, message: error });
+        }
+        let Some(code) = code else {
             return Ok(OAuthPoll { status: "pending".into(), email: None, message: "Esperando la autorización de Microsoft…".into() });
         };
         let endpoint = format!("https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token");
-        let response = reqwest::blocking::Client::new().post(&endpoint).form(&[("client_id", client_id.as_str()), ("grant_type", "authorization_code"), ("code", code.as_str()), ("redirect_uri", "http://127.0.0.1:43821/oauth/callback"), ("code_verifier", verifier.as_str()), ("scope", "openid profile email offline_access Mail.Read Mail.Send")]).send().map_err(|e| format!("No se pudo completar OAuth: {e}"))?;
+        let response = reqwest::blocking::Client::new().post(&endpoint).form(&[("client_id", client_id.as_str()), ("grant_type", "authorization_code"), ("code", code.as_str()), ("redirect_uri", redirect_uri.as_str()), ("code_verifier", verifier.as_str()), ("scope", MS_SCOPES)]).send().map_err(|e| format!("No se pudo completar OAuth: {e}"))?;
         let token: TokenResponse = response.json().map_err(|e| format!("Respuesta OAuth inválida: {e}"))?;
         if let Some(error) = token.error {
             // El código fue rechazado o ya canjeado: se descarta el intento para
@@ -133,7 +227,7 @@ mod tests {
     #[test]
     fn callback_guarda_codigo_solo_para_estado_pendiente() {
         let mut map = HashMap::new();
-        map.insert("estado-activo".to_string(), PendingOAuth { verifier: "v".into(), code: None });
+        map.insert("estado-activo".to_string(), PendingOAuth { verifier: "v".into(), code: None, redirect_uri: MS_LOOPBACK_REDIRECT.into(), error: None });
         let shared = Arc::new(Mutex::new(map));
         let request = "GET /oauth/callback?code=ABC123&state=estado-activo HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
         assert!(store_callback_code(request, &shared));
@@ -148,12 +242,32 @@ mod tests {
     #[test]
     fn callback_no_repite_codigo_ya_almacenado() {
         let mut map = HashMap::new();
-        map.insert("estado".to_string(), PendingOAuth { verifier: "v".into(), code: Some("primero".into()) });
+        map.insert("estado".to_string(), PendingOAuth { verifier: "v".into(), code: Some("primero".into()), redirect_uri: MS_LOOPBACK_REDIRECT.into(), error: None });
         let shared = Arc::new(Mutex::new(map));
         // La segunda redirección con el mismo estado no sobreescribe el código
         // que ya se almacenó: el primer intento ganó.
         let request = "GET /oauth/callback?code=segundo&state=estado HTTP/1.1\r\n\r\n";
         assert!(!store_callback_code(request, &shared));
         assert_eq!(shared.lock().unwrap().get("estado").and_then(|item| item.code.clone()).as_deref(), Some("primero"));
+    }
+
+    #[test]
+    fn redireccion_nativa_guarda_codigo_y_error() {
+        let mut map = HashMap::new();
+        map.insert("estado".to_string(), PendingOAuth { verifier: "v".into(), code: None, redirect_uri: MS_NATIVE_REDIRECT.into(), error: None });
+        let shared = Arc::new(Mutex::new(map));
+
+        let autorizado = tauri::Url::parse("https://login.microsoftonline.com/common/oauth2/nativeclient?code=ABC123&state=estado").unwrap();
+        store_native_redirect(&autorizado, &shared);
+        assert_eq!(shared.lock().unwrap().get("estado").and_then(|item| item.code.clone()).as_deref(), Some("ABC123"));
+
+        let cancelado = tauri::Url::parse("https://login.microsoftonline.com/common/oauth2/nativeclient?error=access_denied&state=estado").unwrap();
+        store_native_redirect(&cancelado, &shared);
+        let message = shared.lock().unwrap().get("estado").and_then(|item| item.error.clone());
+        assert!(message.unwrap_or_default().contains("access_denied"));
+
+        // Una redirección de otro intento no toca el estado ajeno.
+        store_native_redirect(&autorizado, &shared);
+        assert!(shared.lock().unwrap().get("estado").and_then(|item| item.code.clone()).is_some());
     }
 }

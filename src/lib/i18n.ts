@@ -170,7 +170,8 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'setup.badgeManual': 'Configuración manual',
     'setup.incomingServer': 'Servidor de entrada ({provider})',
     'setup.testConnection': 'Probar conexión',
-    'setup.msOauthExplainer': 'Se abrirá Microsoft en una ventana segura para autorizar e-Meil mediante OAuth 2.0 con PKCE.',
+    'setup.msOauthExplainer': 'Se abre la ventana de inicio de sesión de Microsoft para que entres con tu cuenta de Hotmail, Outlook, Live o Microsoft 365. No necesitas configurar ninguna aplicación.',
+    'setup.msOauthPrivacy': 'e-Meil nunca ve tu contraseña: Microsoft entrega un permiso revocable para leer, organizar y enviar correo.',
     'setup.passwordPlaceholder': 'Se guarda en el almacén seguro del sistema',
     'setup.passwordHint': 'La contraseña se guarda cifrada en el almacén de tu sistema (Windows Credential Manager o Linux Secret Service). e-Meil no tiene servidores propios.',
     // Redactor
@@ -394,7 +395,8 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'setup.badgeManual': 'Manual setup',
     'setup.incomingServer': 'Incoming server ({provider})',
     'setup.testConnection': 'Test connection',
-    'setup.msOauthExplainer': 'Microsoft will open in a secure window to authorize e-Meil using OAuth 2.0 with PKCE.',
+    'setup.msOauthExplainer': 'The Microsoft sign-in window opens so you can use your Hotmail, Outlook, Live, or Microsoft 365 account. No app configuration needed.',
+    'setup.msOauthPrivacy': 'e-Meil never sees your password: Microsoft grants a revocable permission to read, organize, and send mail.',
     'setup.passwordPlaceholder': 'Stored in your system secure store',
     'setup.passwordHint': 'The password is stored encrypted in your system store (Windows Credential Manager or Linux Secret Service). e-Meil has no servers of its own.',
     // Redactor

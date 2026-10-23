@@ -45,6 +45,7 @@ pub fn run() {
             pop3_client::read_pop3_message,
             pop3_client::delete_pop3_message,
             oauth::start_microsoft_oauth,
+            oauth::start_microsoft_oauth_window,
             oauth::poll_microsoft_oauth,
             smtp_client::send_smtp_mail,
             smtp_client::inspect_attachment,
