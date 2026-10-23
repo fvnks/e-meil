@@ -21,7 +21,8 @@ const CALLBACK_SKIP: &str = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain;
 /// sesión con un refresh token.
 const MS_SCOPES: &str = "openid profile email offline_access Mail.ReadWrite Mail.Send";
 /// Redirección del flujo clásico con navegador externo y servidor local.
-const MS_LOOPBACK_REDIRECT: &str = "http://127.0.0.1:43821/oauth/callback";
+const MS_LOOPBACK_REDIRECT: &str = "http://localhost:43821/oauth/callback";
+const MS_LOOPBACK_REDIRECT_ENCODED: &str = "http%3A%2F%2Flocalhost%3A43821%2Foauth%2Fcallback";
 /// Redirección nativa que Microsoft devuelve a la ventana embebida. La ventana
 /// intercepta la navegación antes de que la página de error llegue a cargarse.
 const MS_NATIVE_REDIRECT: &str = "https://login.microsoftonline.com/common/oauth2/nativeclient";
@@ -212,7 +213,7 @@ pub async fn start_microsoft_oauth(app: tauri::AppHandle, state: tauri::State<'_
     let oauth_state: String = rand::thread_rng().sample_iter(&Alphanumeric).take(32).map(char::from).collect();
     state.0.lock().map_err(|_| "No se pudo preparar OAuth".to_string())?.insert(oauth_state.clone(), PendingOAuth { verifier, code: None, redirect_uri: MS_LOOPBACK_REDIRECT.into(), error: None });
     let redirect_uri = MS_LOOPBACK_REDIRECT;
-    let authorization_url = format!("https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?client_id={client_id}&response_type=code&redirect_uri={redirect_uri}&response_mode=query&scope={scope}&state={oauth_state}&code_challenge={challenge}&code_challenge_method=S256", scope = MS_SCOPES.replace(' ', "%20"));
+    let authorization_url = format!("https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?client_id={client_id}&response_type=code&redirect_uri={MS_LOOPBACK_REDIRECT_ENCODED}&response_mode=query&scope={scope}&state={oauth_state}&code_challenge={challenge}&code_challenge_method=S256", scope = MS_SCOPES.replace(' ', "%20"));
     let listener = TcpListener::bind("127.0.0.1:43821").map_err(|e| format!("No se pudo iniciar callback OAuth local: {e}"))?;
     listener.set_nonblocking(true).map_err(|e| format!("Callback OAuth local no acepta conexiones: {e}"))?;
     let shared = state.0.clone();
