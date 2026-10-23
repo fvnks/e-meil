@@ -3,7 +3,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 export interface ImapConnectionResult { ok: boolean; mailboxCount: number | null; message: string; }
 export interface ImapFolder { name: string; delimiter: string | null; flags: string[]; specialUse: string | null; }
 export interface ImapAttachment { part: string; filename: string; contentType: string; size: number | null; }
-export interface ImapMessage { uid: number; subject: string; from: string; receivedAt: string | null; preview: string; unread: boolean; hasAttachments: boolean; }
+export interface ImapMessage { uid: number; subject: string; from: string; receivedAt: string | null; preview: string; unread: boolean; hasAttachments: boolean; messageId: string | null; inReplyTo: string | null; }
 export interface ImapMessageContent { uid: number; subject: string; from: string; toRecipients: string | null; ccRecipients: string | null; receivedAt: string | null; text: string; hasAttachments: boolean; attachments: ImapAttachment[]; }
 
 function requireDesktop() { if (!isTauri()) throw new Error('Esta operación IMAP solo está disponible en la aplicación de escritorio.'); }

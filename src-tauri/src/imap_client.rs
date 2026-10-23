@@ -40,6 +40,8 @@ pub struct ImapMessage {
     pub preview: String,
     pub unread: bool,
     pub has_attachments: bool,
+    pub message_id: Option<String>,
+    pub in_reply_to: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -192,7 +194,7 @@ fn fetch_message_headers(session: &mut imap::Session<native_tls::TlsStream<std::
         let preview = fetch.text().or_else(|| fetch.body()).map(|body| normalize_body_text(body).replace('\n', " ").chars().take(180).collect()).unwrap_or_default();
         let uid = fetch.uid.unwrap_or_default();
         let seen = fetch.flags().iter().any(|flag| format!("{flag:?}") == "\\Seen");
-        messages.push(ImapMessage { uid, subject, from, received_at: None, preview, unread: !seen, has_attachments: false });
+        messages.push(ImapMessage { uid, subject, from, received_at: None, preview, unread: !seen, has_attachments: false, message_id: envelope.and_then(|e| e.message_id.as_ref()).map(|id| String::from_utf8_lossy(id).trim().to_string()), in_reply_to: envelope.and_then(|e| e.in_reply_to.as_ref()).map(|id| String::from_utf8_lossy(id).trim().to_string()) });
     }
     Ok(messages)
 }
@@ -293,7 +295,7 @@ pub fn search_imap_messages(input: ImapSearchInput) -> Result<Vec<ImapMessage>, 
             let from = envelope.and_then(|e| e.from.as_ref().and_then(|addresses| addresses.first())).map(|address| format_address_parts(address.name.as_deref(), address.mailbox.as_deref(), address.host.as_deref())).unwrap_or_else(|| "Remitente desconocido".into());
             let preview = fetch.text().or_else(|| fetch.body()).map(|body| normalize_body_text(body).replace('\n', " ").chars().take(180).collect()).unwrap_or_default();
             let seen = fetch.flags().iter().any(|flag| format!("{flag:?}") == "\\Seen");
-            messages.push(ImapMessage { uid: fetch.uid.unwrap_or_default(), subject, from, received_at: None, preview, unread: !seen, has_attachments: false });
+            messages.push(ImapMessage { uid: fetch.uid.unwrap_or_default(), subject, from, received_at: None, preview, unread: !seen, has_attachments: false, message_id: envelope.and_then(|e| e.message_id.as_ref()).map(|id| String::from_utf8_lossy(id).trim().to_string()), in_reply_to: envelope.and_then(|e| e.in_reply_to.as_ref()).map(|id| String::from_utf8_lossy(id).trim().to_string()) });
         }
         session.logout().map_err(|e| format!("La sesión IMAP no pudo cerrarse limpiamente: {e}"))?;
         Ok(messages)
@@ -408,7 +410,7 @@ pub fn list_imap_messages(account_id: String, host: String, port: u16, security:
             let preview = fetch.text().or_else(|| fetch.body()).map(|body| normalize_body_text(body).replace('\n', " ").chars().take(180).collect()).unwrap_or_default();
             let uid = fetch.uid.unwrap_or_default();
             let seen = fetch.flags().iter().any(|flag| format!("{flag:?}") == "\\Seen");
-            messages.push(ImapMessage { uid, subject, from, received_at: None, preview, unread: !seen, has_attachments: false });
+            messages.push(ImapMessage { uid, subject, from, received_at: None, preview, unread: !seen, has_attachments: false, message_id: envelope.and_then(|e| e.message_id.as_ref()).map(|id| String::from_utf8_lossy(id).trim().to_string()), in_reply_to: envelope.and_then(|e| e.in_reply_to.as_ref()).map(|id| String::from_utf8_lossy(id).trim().to_string()) });
         }
         session.logout().map_err(|e| format!("La sesión IMAP no pudo cerrarse limpiamente: {e}"))?;
         Ok(messages)

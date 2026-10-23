@@ -118,6 +118,24 @@
 .unified-toggle{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer;white-space:nowrap}
 .unified-toggle input{accent-color:var(--accent)}
 .unified-chip{font-size:10px;color:var(--accent-ink);background:var(--accent-soft);border-radius:4px;padding:2px 7px;margin-left:6px;font-weight:600;vertical-align:2px}
+/* --- Hilos de conversación --- */
+.thread-card{border:1px solid var(--line);border-radius:8px;margin-bottom:6px;overflow:hidden;background:var(--paper);transition:border-color .15s ease}
+.thread-card:hover{border-color:var(--accent)}
+.thread-card.thread-unread{border-left:3px solid var(--accent)}
+.thread-header{width:100%;display:flex;align-items:center;gap:10px;padding:10px 12px;border:0;background:transparent;text-align:left;cursor:pointer;font:inherit}
+.thread-header .sender{font-size:10.5px;font-weight:600;color:var(--ink);flex:none;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.thread-header .subject-line{flex:1;font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.thread-meta{display:flex;align-items:center;gap:6px;flex:none}
+.thread-count{font-size:9px;font-weight:700;color:var(--paper);background:var(--accent);border-radius:8px;padding:1px 7px;min-width:14px;text-align:center}
+.thread-card:not(.thread-unread) .thread-count{background:var(--muted)}
+.thread-preview{padding:6px 12px 10px;font-size:9.5px;color:var(--muted);line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.thread-body{border-top:1px solid var(--line);display:flex;flex-direction:column}
+.thread-message{padding:6px 12px;border-bottom:1px solid var(--line)}
+.thread-message:last-child{border-bottom:0}
+.thread-message .message-open{display:flex;align-items:center;gap:8px;width:100%;background:none;border:0;text-align:left;padding:4px 0;cursor:pointer;font:inherit}
+.thread-message .sender{font-size:10px;color:var(--ink);font-weight:600;flex:none}
+.thread-message .message-time{font-size:8.5px;color:var(--muted)}
+.thread-message .preview{font-size:9px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* --- Responsive móvil: drawer de carpetas (tarea 3) --- */
 .menu-button{display:none;border:0;background:transparent;width:34px;height:34px;border-radius:6px;place-items:center;gap:3px;padding:0 8px;cursor:pointer}
 .menu-button .menu-icon{display:block;width:15px;height:2px;border-radius:2px;background:var(--ink)}

@@ -247,7 +247,8 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'reading.viewHtml': 'Ver HTML',
     'reading.viewText': 'Ver texto plano',
     'list.unified': '· todas las cuentas',
-    'list.unifiedLabel': 'Bandeja unificada'
+    'list.unifiedLabel': 'Bandeja unificada',
+    'list.threadView': 'Conversaciones'
   },
   en: {
     // Barra de aplicaciones
@@ -468,7 +469,8 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'reading.viewHtml': 'View HTML',
     'reading.viewText': 'View plain text',
     'list.unified': '· all accounts',
-    'list.unifiedLabel': 'Unified inbox'
+    'list.unifiedLabel': 'Unified inbox',
+    'list.threadView': 'Conversations'
   }
 };
 

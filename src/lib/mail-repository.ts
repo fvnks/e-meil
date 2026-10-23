@@ -12,6 +12,7 @@ export interface UnifiedMessage {
   unread: boolean;
   starred: boolean;
   hasAttachments: boolean;
+  conversationId?: string | null;
 }
 
 export interface MailRepository {
