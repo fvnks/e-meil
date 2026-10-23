@@ -44,6 +44,31 @@ export async function saveMicrosoftAccount(input: { emailAddress: string; displa
     oauthTenant: input.tenant,
   } satisfies AccountRecord });
 }
+export async function saveGoogleAccount(input: { emailAddress: string; displayName?: string }): Promise<void> {
+  if (!isTauri()) throw new Error('La persistencia de cuentas solo está disponible en escritorio.');
+  const email = input.emailAddress.trim();
+  if (!email) throw new Error('Falta el correo de la cuenta de Google.');
+  await invoke('save_account', { account: {
+    // El prefijo google: es el interruptor de XOAUTH2 en IMAP/SMTP; los hosts
+    // de Google son fijos (TLS 993 y 465).
+    id: `google:${email}`,
+    displayName: input.displayName?.trim() || 'Gmail',
+    emailAddress: email,
+    provider: 'imap',
+    incomingHost: 'imap.gmail.com',
+    incomingPort: 993,
+    incomingSecurity: 'tls',
+    incomingUsername: email,
+    outgoingHost: 'smtp.gmail.com',
+    outgoingPort: 465,
+    outgoingSecurity: 'tls',
+    outgoingUsername: email,
+    auth: 'oauth',
+    oauthClientId: undefined,
+    oauthTenant: undefined,
+  } satisfies AccountRecord });
+}
+
 export async function saveAccountMetadata(setup: AccountSetup): Promise<void> {
   if (!isTauri()) throw new Error('La persistencia de cuentas solo está disponible en escritorio.');
   await invoke('save_account', { account: {

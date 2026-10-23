@@ -174,6 +174,11 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'setup.testConnection': 'Probar conexión',
     'setup.msOauthExplainer': 'Se abre la ventana de inicio de sesión de Microsoft para que entres con tu cuenta de Hotmail, Outlook, Live o Microsoft 365. No necesitas configurar ninguna aplicación.',
     'setup.msOauthPrivacy': 'e-Meil nunca ve tu contraseña: Microsoft entrega un permiso revocable para leer, organizar y enviar correo.',
+    'setup.googleDesc': 'Gmail con OAuth integrado',
+    'setup.badgeOauth': 'OAuth',
+    'setup.googleOauthExplainer': 'Se abre tu navegador para que entres con tu cuenta de Gmail: OAuth de Google con PKCE. No hace falta contraseña de aplicación ni Client ID.',
+    'setup.googleOauthPrivacy': 'e-Meil nunca ve tu contraseña: Google entrega un permiso revocable para leer y enviar correo por IMAP/SMTP. La pantalla de consentimiento mostrará el nombre “Thunderbird”: es la identidad pública de escritorio que usamos para que no tengas que registrar nada.',
+    'setup.googleLoginButton': 'Iniciar sesión con Google',
     'setup.passwordPlaceholder': 'Se guarda en el almacén seguro del sistema',
     'setup.passwordHint': 'La contraseña se guarda cifrada en el almacén de tu sistema (Windows Credential Manager o Linux Secret Service). e-Meil no tiene servidores propios.',
     // Redactor
@@ -401,6 +406,11 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
     'setup.testConnection': 'Test connection',
     'setup.msOauthExplainer': 'The Microsoft sign-in window opens so you can use your Hotmail, Outlook, Live, or Microsoft 365 account. No app configuration needed.',
     'setup.msOauthPrivacy': 'e-Meil never sees your password: Microsoft grants a revocable permission to read, organize, and send mail.',
+    'setup.googleDesc': 'Gmail with built-in OAuth',
+    'setup.badgeOauth': 'OAuth',
+    'setup.googleOauthExplainer': 'Your browser opens so you can sign in with your Gmail account: Google OAuth with PKCE. No app password or Client ID needed.',
+    'setup.googleOauthPrivacy': 'e-Meil never sees your password: Google grants a revocable permission to read and send mail over IMAP/SMTP. The consent screen shows the name “Thunderbird”: it is the public desktop identity we rely on so you do not have to register anything.',
+    'setup.googleLoginButton': 'Sign in with Google',
     'setup.passwordPlaceholder': 'Stored in your system secure store',
     'setup.passwordHint': 'The password is stored encrypted in your system store (Windows Credential Manager or Linux Secret Service). e-Meil has no servers of its own.',
     // Redactor

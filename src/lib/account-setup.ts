@@ -16,6 +16,14 @@ export function initialSetup(provider: MailProvider): AccountSetup {
       incoming: secure('graph.microsoft.com', 443),
     };
   }
+  if (provider === 'google') {
+    // Gmail fijo: IMAP/SMTP de Google con OAuth; la dirección llega del id_token.
+    return {
+      displayName: 'Gmail', emailAddress: '', provider, auth: 'oauth',
+      incoming: secure('imap.gmail.com', 993),
+      outgoing: secure('smtp.gmail.com', 465),
+    };
+  }
   return {
     displayName: '', emailAddress: '', provider, auth: 'password',
     incoming: secure('', provider === 'imap' ? 993 : 995),

@@ -1,5 +1,5 @@
 use lettre::{message::{header::ContentType, Attachment, Mailbox, MultiPart, SinglePart}, Message, SmtpTransport, Transport};
-use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
@@ -84,18 +84,23 @@ pub fn send_smtp_mail(input: SendMailInput) -> Result<SendSmtpResult, String> {
         multipart = multipart.singlepart(Attachment::new(attachment.filename.chars().take(180).collect()).body(data, content_type));
     }
     let message = builder.multipart(multipart).map_err(|e| format!("No se pudo construir el mensaje: {e}"))?;
-    with_credential(&input.account_id, |password| {
-        let credentials = Credentials::new(input.username.clone(), password.to_string());
-        // TLS directo (465, conexión implícita) o STARTTLS (587, upgrade en claro).
-        let transport = if input.security == "starttls" {
-            SmtpTransport::starttls_relay(host).map_err(|e| format!("No se pudo preparar SMTP STARTTLS: {e}"))?
-        } else {
-            SmtpTransport::relay(host).map_err(|e| format!("No se pudo preparar SMTP TLS: {e}"))?
-        };
-        let transport = transport.port(input.port).credentials(credentials).build();
-        transport.send(&message).map_err(|e| format!("El servidor SMTP rechazó el mensaje: {e}"))?;
-        Ok(())
-    })?;
+    // Gmail envía por SMTP con XOAUTH2 (token renovable); el resto usa
+    // contraseña del keyring con el mecanismo por omisión.
+    let oauth_email = input.account_id.strip_prefix("google:").map(str::to_string);
+    let credentials = if let Some(email) = &oauth_email {
+        Credentials::new(input.username.clone(), crate::oauth::valid_access_token(email)?)
+    } else {
+        Credentials::new(input.username.clone(), with_credential(&input.account_id, |password| Ok(password.to_string()))?)
+    };
+    // TLS directo (465, conexión implícita) o STARTTLS (587, upgrade en claro).
+    let transport = if input.security == "starttls" {
+        SmtpTransport::starttls_relay(host).map_err(|e| format!("No se pudo preparar SMTP STARTTLS: {e}"))?
+    } else {
+        SmtpTransport::relay(host).map_err(|e| format!("No se pudo preparar SMTP TLS: {e}"))?
+    };
+    let transport = if oauth_email.is_some() { transport.authentication(vec![Mechanism::Xoauth2]) } else { transport };
+    let transport = transport.port(input.port).credentials(credentials).build();
+    transport.send(&message).map_err(|e| format!("El servidor SMTP rechazó el mensaje: {e}"))?;
     let mut sent_copy_saved = None;
     let mut sent_copy_error = None;
     if let Some(sent) = input.sent_copy {

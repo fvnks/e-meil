@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri_plugin_opener::OpenerExt;
-use crate::credentials::save_oauth_tokens;
+use crate::credentials::{save_oauth_tokens, with_oauth_refresh_token};
 
 /// Plazo máximo que el servidor local de callback espera la redirección.
 const CALLBACK_DEADLINE: Duration = Duration::from_secs(600);
@@ -41,7 +41,167 @@ pub struct OAuthStart { pub authorization_url: String, pub state: String, pub re
 #[serde(rename_all = "camelCase")]
 pub struct OAuthPoll { pub status: String, pub email: Option<String>, pub message: String }
 
-#[derive(Debug, Deserialize)] struct TokenResponse { access_token: Option<String>, refresh_token: Option<String>, #[allow(dead_code)] id_token: Option<String>, error: Option<String>, error_description: Option<String> }
+#[derive(Debug, Deserialize)] struct TokenResponse { access_token: Option<String>, refresh_token: Option<String>, id_token: Option<String>, error: Option<String>, error_description: Option<String> }
+
+/// ===== Gmail (Google OAuth 2.0 + XOAUTH2) =====
+///
+/// Google bloquea las ventanas embebidas de OAuth, así que Gmail usa el flujo
+/// clásico con navegador externo y servidor local. La identidad OAuth es la
+/// aplicación de escritorio de Thunderbird, pública y documentada en el código
+/// fuente de comm-central: mismo precedente que Microsoft con DavMail, para no
+/// pedirle un Client ID a la persona.
+///
+/// El consentimiento de Google mostrará el nombre "Thunderbird" porque esa es
+/// la identidad registrada; el asistente lo explica con franqueza.
+const GOOGLE_CLIENT_ID: &str = "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com";
+const GOOGLE_CLIENT_SECRET: &str = "kSmqreRr0qwBWJgbf5Y-PjSU";
+const GOOGLE_AUTH_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
+/// Alcance total de Gmail: IMAP y SMTP sobre XOAUTH2, más perfil OIDC para
+/// leer el correo de la cuenta desde el id_token.
+const GOOGLE_SCOPES: &str = "https://mail.google.com/ openid profile email";
+/// Redirect de loopback registrado por Thunderbird: `http://localhost` con
+/// cualquier puerto. e-Meil usa un puerto propio para no chocar con Microsoft
+/// (que está en el 43821).
+const GOOGLE_LOOPBACK_REDIRECT: &str = "http://localhost:43822/";
+const GOOGLE_LOOPBACK_REDIRECT_ENCODED: &str = "http%3A%2F%2Flocalhost%3A43822%2F";
+
+/// Identidad OAuth de Google: acepta un reemplazo por entorno para pruebas sin
+/// recopilar nada del binario (`EMEIL_GOOGLE_CLIENT_ID`).
+fn google_client_id() -> String {
+    static OVERRIDE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let env = std::env::var("EMEIL_GOOGLE_CLIENT_ID").ok().map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
+    OVERRIDE.get_or_init(|| env).clone().unwrap_or_else(|| GOOGLE_CLIENT_ID.into())
+}
+
+/// Secreto emparejado de la identidad de escritorio (`EMEIL_GOOGLE_CLIENT_SECRET`).
+fn google_client_secret() -> String {
+    static OVERRIDE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let env = std::env::var("EMEIL_GOOGLE_CLIENT_SECRET").ok().map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
+    OVERRIDE.get_or_init(|| env).clone().unwrap_or_else(|| GOOGLE_CLIENT_SECRET.into())
+}
+
+/// Abre la sesión de Google en el navegador externo y queda a la escucha del
+/// código de autorización en el puerto local 43822.
+#[tauri::command]
+pub async fn start_google_oauth(app: tauri::AppHandle, state: tauri::State<'_, OAuthState>) -> Result<OAuthStart, String> {
+    let verifier: String = rand::thread_rng().sample_iter(&Alphanumeric).take(64).map(char::from).collect();
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let oauth_state: String = rand::thread_rng().sample_iter(&Alphanumeric).take(32).map(char::from).collect();
+    state.0.lock().map_err(|_| "No se pudo preparar OAuth".to_string())?.insert(oauth_state.clone(), PendingOAuth { verifier, code: None, redirect_uri: GOOGLE_LOOPBACK_REDIRECT.into(), error: None });
+    let scope = GOOGLE_SCOPES.replace(':', "%3A").replace('/', "%2F").replace(' ', "%20");
+    let authorization_url = format!("{GOOGLE_AUTH_ENDPOINT}?client_id={}&response_type=code&redirect_uri={GOOGLE_LOOPBACK_REDIRECT_ENCODED}&scope={scope}&state={oauth_state}&code_challenge={challenge}&code_challenge_method=S256&access_type=offline&prompt=select_account", google_client_id());
+    let listener = TcpListener::bind(("127.0.0.1", 43822)).map_err(|e| format!("No se pudo iniciar el servidor local de Google (puerto 43822 ocupado?): {e}"))?;
+    listener.set_nonblocking(true).map_err(|e| format!("Callback OAuth local no acepta conexiones: {e}"))?;
+    let shared = state.0.clone();
+    std::thread::spawn(move || serve_callback(listener, shared));
+    app.opener().open_url(authorization_url.clone(), None::<String>).map_err(|e| format!("No se pudo abrir el navegador: {e}"))?;
+    Ok(OAuthStart { authorization_url, state: oauth_state, redirect_uri: GOOGLE_LOOPBACK_REDIRECT.into() })
+}
+
+/// Canjea el código de Google por tokens bajo PKCE y guarda el resultado
+/// (`google:{correo}:oauth:access/refresh`) en el keyring del sistema.
+#[tauri::command]
+pub async fn poll_google_oauth(state: tauri::State<'_, OAuthState>, oauth_state: String) -> Result<OAuthPoll, String> {
+    let shared = state.0.clone();
+    let client_id = google_client_id();
+    let client_secret = google_client_secret();
+    tauri::async_runtime::spawn_blocking(move || -> Result<OAuthPoll, String> {
+        let entry = shared.lock().map_err(|_| "No se pudo leer OAuth".to_string())?.get(&oauth_state).map(|item| (item.verifier.clone(), item.code.clone(), item.redirect_uri.clone(), item.error.clone()));
+        let Some((verifier, code, redirect_uri, error)) = entry else {
+            return Ok(OAuthPoll { status: "pending".into(), email: None, message: "Esperando la autorización de Google…".into() });
+        };
+        if let Some(error) = error {
+            shared.lock().ok().map(|mut map| map.remove(&oauth_state));
+            return Ok(OAuthPoll { status: "error".into(), email: None, message: error });
+        }
+        let Some(code) = code else {
+            return Ok(OAuthPoll { status: "pending".into(), email: None, message: "Esperando la autorización de Google…".into() });
+        };
+        let response = reqwest::blocking::Client::new().post(GOOGLE_TOKEN_ENDPOINT).form(&[
+            ("client_id", client_id.as_str()),
+            ("client_secret", client_secret.as_str()),
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
+            ("code_verifier", verifier.as_str()),
+        ]).send().map_err(|e| format!("No se pudo completar OAuth: {e}"))?;
+        let token: TokenResponse = response.json().map_err(|e| format!("Respuesta OAuth inválida: {e}"))?;
+        if let Some(error) = token.error {
+            shared.lock().ok().map(|mut map| map.remove(&oauth_state));
+            return Ok(OAuthPoll { status: "error".into(), email: None, message: format!("Google rechazó la autorización: {}", token.error_description.unwrap_or(error)) });
+        }
+        let access_token = token.access_token.ok_or_else(|| "Google no devolvió un token de acceso".to_string())?;
+        let id_token = token.id_token.ok_or_else(|| "Google no devolvió el perfil de la cuenta".to_string())?;
+        let email = email_from_id_token(&id_token).ok_or_else(|| "No se pudo leer el correo de la cuenta desde la sesión de Google".to_string())?;
+        // El código es de un solo uso: se retira el pendiente antes de persistir.
+        shared.lock().ok().map(|mut map| map.remove(&oauth_state));
+        let account_id = format!("google:{email}");
+        save_oauth_tokens(&account_id, &access_token, token.refresh_token.as_deref())?;
+        Ok(OAuthPoll { status: "authorized".into(), email: Some(email), message: "Google autorizó la cuenta y los tokens quedaron protegidos en el keyring.".into() })
+    })
+    .await
+    .map_err(|e| format!("No se pudo ejecutar el sondeo OAuth: {e}"))?
+}
+
+/// Extrae el correo del payload del id_token (JWT con segmentos base64url).
+fn email_from_id_token(id_token: &str) -> Option<String> {
+    let payload = id_token.split('.').nth(1)?;
+    let decoded = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    json.get("email")?.as_str()?.trim().to_string().non_empty()
+}
+
+trait NonEmptyString { fn non_empty(self) -> Option<String>; }
+impl NonEmptyString for String {
+    fn non_empty(self) -> Option<String> { if self.is_empty() { None } else { Some(self) } }
+}
+
+/// Copia en RAM de los access tokens vigentes: evita golpear a Google en cada
+/// conexión IMAP/SMTP. La caducidad que declara Google (~1 h) se corta a 55 min.
+fn token_cache() -> &'static std::sync::Mutex<HashMap<String, (String, Instant)>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, (String, Instant)>>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// Token de acceso vigente para una cuenta `google:`; refresca y persiste si
+/// venció (o si la copia en RAM aún no existe).
+pub(crate) fn valid_access_token(email: &str) -> Result<String, String> {
+    let account_id = format!("google:{email}");
+    if let Ok(cache) = token_cache().lock() {
+        if let Some((access, until)) = cache.get(&account_id) {
+            if *until > Instant::now() { return Ok(access.clone()); }
+        }
+    }
+    let client_id = google_client_id();
+    let client_secret = google_client_secret();
+    let access = with_oauth_refresh_token(&account_id, |refresh_token| {
+        let response = reqwest::blocking::Client::new().post(GOOGLE_TOKEN_ENDPOINT).form(&[
+            ("client_id", client_id.as_str()),
+            ("client_secret", client_secret.as_str()),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+        ]).send().map_err(|e| format!("No se pudo renovar la sesión de Google: {e}"))?;
+        let token: TokenResponse = response.json().map_err(|e| format!("Respuesta OAuth inválida al renovar: {e}"))?;
+        if let Some(error) = token.error {
+            return Err(format!("La sesión de Google no se pudo renovar ({}). Vuelve a conectar la cuenta en Ajustes.", token.error_description.unwrap_or(error)));
+        }
+        let access = token.access_token.ok_or_else(|| "Google no devolvió un token de acceso al renovar".to_string())?;
+        // Google conserva el refresh token; si devuelve otro, se reemplaza.
+        save_oauth_tokens(&account_id, &access, token.refresh_token.as_deref().or(Some(refresh_token)))?;
+        Ok(access)
+    })?;
+    if let Ok(mut cache) = token_cache().lock() {
+        cache.insert(account_id, (access.clone(), Instant::now() + Duration::from_secs(55 * 60)));
+    }
+    Ok(access)
+}
+
+/// Respuesta inicial del mecanismo SASL XOAUTH2; el crate imap la envuelve con
+/// base64 al enviarla.
+pub(crate) fn xoauth2_initial_response(email: &str, token: &str) -> Vec<u8> {
+    format!("user={email}\u{1}auth=Bearer {token}\u{1}").into_bytes()
+}
 
 #[tauri::command]
 pub async fn start_microsoft_oauth(app: tauri::AppHandle, state: tauri::State<'_, OAuthState>, client_id: String, tenant: String) -> Result<OAuthStart, String> {
@@ -223,6 +383,49 @@ pub async fn poll_microsoft_oauth(state: tauri::State<'_, OAuthState>, client_id
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn respuesta_xoauth2_tiene_formato_exacto() {
+        let response = xoauth2_initial_response("qa@gmail.com", "ya29.token");
+        let text = String::from_utf8(response).unwrap();
+        assert_eq!(text, "user=qa@gmail.com\u{1}auth=Bearer ya29.token\u{1}");
+    }
+
+    #[test]
+    fn id_token_entrega_el_correo() {
+        // JWT de tres segmentos base64url: el payload lleva el email.
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"email":"QA@Gmail.com","sub":"123"}"#);
+        let id_token = format!("eyJhbGciOiJSUzI1NiJ9.{payload}.firma-sin-usar");
+        assert_eq!(email_from_id_token(&id_token).as_deref(), Some("QA@Gmail.com"));
+        // Un id_token corrupto o sin correo no entrega nada.
+        assert!(email_from_id_token("no-es-jwt").is_none());
+        let sin_email = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"sub":"1"}"#);
+        assert!(email_from_id_token(&format!("a.{sin_email}.c")).is_none());
+        assert!(email_from_id_token("a.###.c").is_none());
+    }
+
+    #[test]
+    fn url_de_autorizacion_de_google_lleva_todos_los_parametros() {
+        // Se ejercita el mismo armado de start_google_oauth sin abrir puertos
+        // ni navegador: se valida el formato de la URL.
+        let verifier = "v".repeat(64);
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        let scope = GOOGLE_SCOPES.replace(':', "%3A").replace('/', "%2F").replace(' ', "%20");
+        let url = format!("{GOOGLE_AUTH_ENDPOINT}?client_id={}&response_type=code&redirect_uri={GOOGLE_LOOPBACK_REDIRECT_ENCODED}&scope={scope}&state=estado&code_challenge={challenge}&code_challenge_method=S256&access_type=offline&prompt=select_account", google_client_id());
+        for expected in [
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=",
+            "&response_type=code",
+            "&redirect_uri=http%3A%2F%2Flocalhost%3A43822%2F",
+            "&scope=https%3A%2F%2Fmail.google.com%2F%20openid%20profile%20email",
+            "&code_challenge=",
+            "&code_challenge_method=S256",
+            "&access_type=offline",
+            "&prompt=select_account",
+            google_client_id().as_str(),
+        ] {
+            assert!(url.contains(expected), "Falta '{expected}' en {url}");
+        }
+    }
 
     #[test]
     fn callback_guarda_codigo_solo_para_estado_pendiente() {

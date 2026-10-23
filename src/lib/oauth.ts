@@ -35,6 +35,50 @@ export async function pollMicrosoftOAuth(clientId: string, tenant: string, state
   return invoke('poll_microsoft_oauth', { clientId, tenant, oauthState: state });
 }
 
+/** Identidad de Google: Rust conoce todos los parámetros, la UI solo sondea. */
+export async function startGoogleOauth(): Promise<OAuthStart> {
+  if (!isTauri()) throw new Error('El inicio de sesión con Google solo está disponible en la aplicación de escritorio.');
+  return invoke<OAuthStart>('start_google_oauth');
+}
+
+export async function pollGoogleOAuth(state: string): Promise<OAuthStatus> {
+  if (!isTauri()) throw new Error('OAuth solo está disponible en escritorio.');
+  return invoke('poll_google_oauth', { oauthState: state });
+}
+
+/**
+ * Espera la autorización de Google hasta que se complete, falle o caduque.
+ * Google bloquea las ventanas embebidas, así que el flujo se abre en el
+ * navegador del sistema y el servidor local (puerto 43822) recibe el código.
+ */
+export async function waitForGoogleAuthorization(
+  state: string,
+  { intervalMs = 2000, timeoutMs = 300_000, isCurrent, onTick }: WaitForOptions = {}
+): Promise<OAuthStatus> {
+  const startedAt = Date.now();
+  for (;;) {
+    if (isCurrent && !isCurrent()) {
+      return { status: 'stale', email: null, message: 'Este intento de autorización fue reemplazado por uno más reciente.' };
+    }
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= timeoutMs) {
+      return { status: 'timeout', email: null, message: 'Se agotó el tiempo de espera de la autorización de Google. Vuelve a intentarlo.' };
+    }
+    let status: OAuthStatus;
+    try {
+      status = await pollGoogleOAuth(state);
+    } catch (error) {
+      // Los errores de red son transitorios: se reintenta hasta el plazo máximo.
+      onTick?.(elapsed);
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      continue;
+    }
+    if (status.status === 'authorized' || status.status === 'error') return status;
+    onTick?.(elapsed);
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 /**
  * Sondea la autorización de Microsoft hasta que se complete, falle o caduque.
  *

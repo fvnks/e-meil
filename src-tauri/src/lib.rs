@@ -47,6 +47,8 @@ pub fn run() {
             oauth::start_microsoft_oauth,
             oauth::start_microsoft_oauth_window,
             oauth::poll_microsoft_oauth,
+            oauth::start_google_oauth,
+            oauth::poll_google_oauth,
             smtp_client::send_smtp_mail,
             smtp_client::inspect_attachment,
             graph::list_graph_messages,

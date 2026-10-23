@@ -1,5 +1,5 @@
 /** Modelos compartidos entre UI y adaptadores de correo. */
-export type MailProvider = 'microsoft-graph' | 'imap' | 'pop3';
+export type MailProvider = 'microsoft-graph' | 'google' | 'imap' | 'pop3';
 
 export interface MailAccount {
   id: string;
