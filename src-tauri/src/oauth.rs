@@ -2,6 +2,8 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use socket2::{Domain, Protocol, Socket, Type, SockAddr};
+use std::net::SocketAddr;
 use std::{
     collections::HashMap,
     io::{ErrorKind, Read, Write},
@@ -92,13 +94,24 @@ pub async fn start_google_oauth(app: tauri::AppHandle, state: tauri::State<'_, O
     state.0.lock().map_err(|_| "No se pudo preparar OAuth".to_string())?.insert(oauth_state.clone(), PendingOAuth { verifier, code: None, redirect_uri: GOOGLE_LOOPBACK_REDIRECT.into(), error: None });
     let scope = GOOGLE_SCOPES.replace(':', "%3A").replace('/', "%2F").replace(' ', "%20");
     let authorization_url = format!("{GOOGLE_AUTH_ENDPOINT}?client_id={}&response_type=code&redirect_uri={GOOGLE_LOOPBACK_REDIRECT_ENCODED}&scope={scope}&state={oauth_state}&code_challenge={challenge}&code_challenge_method=S256&access_type=offline&prompt=select_account", google_client_id());
-    // Reintenta el bind por si el puerto está en TIME_WAIT
-    let listener = (0..5).find_map(|i| {
-        match TcpListener::bind(("127.0.0.1", 43822)) {
-            Ok(l) => Some(l),
-            Err(_) if i < 4 => { std::thread::sleep(Duration::from_millis(200)); None },
+    // Reintenta el bind con SO_REUSEADDR por si el puerto está en TIME_WAIT
+    let listener: TcpListener = (0..10).find_map(|i| {
+        match Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)) {
+            Ok(sock) => {
+                if sock.set_reuse_address(true).is_ok() {
+                    let addr: SocketAddr = "127.0.0.1:43822".parse().unwrap();
+                    let sock_addr: SockAddr = addr.into();
+                    if sock.bind(&sock_addr).is_ok() {
+                        if sock.listen(128).is_ok() {
+                            Some(sock.into())
+                        } else { None }
+                    } else { None }
+                } else { None }
+            }
             Err(_) => None,
-        }
+        }.or_else(|| {
+            if i < 9 { std::thread::sleep(Duration::from_millis(200)); None } else { None }
+        })
     }).ok_or_else(|| "No se pudo iniciar el servidor local de Google: el puerto 43822 está en uso".to_string())?;
     listener.set_nonblocking(true).map_err(|e| format!("Callback OAuth local no acepta conexiones: {e}"))?;
     let shared = state.0.clone();
@@ -221,13 +234,24 @@ pub async fn start_microsoft_oauth(app: tauri::AppHandle, state: tauri::State<'_
     state.0.lock().map_err(|_| "No se pudo preparar OAuth".to_string())?.insert(oauth_state.clone(), PendingOAuth { verifier, code: None, redirect_uri: MS_LOOPBACK_REDIRECT.into(), error: None });
     let redirect_uri = MS_LOOPBACK_REDIRECT;
     let authorization_url = format!("https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?client_id={client_id}&response_type=code&redirect_uri={MS_LOOPBACK_REDIRECT_ENCODED}&response_mode=query&scope={scope}&state={oauth_state}&code_challenge={challenge}&code_challenge_method=S256", scope = MS_SCOPES.replace(' ', "%20"));
-    // Reintenta el bind por si el puerto está en TIME_WAIT de un intento anterior
-    let listener = (0..5).find_map(|i| {
-        match TcpListener::bind("127.0.0.1:43821") {
-            Ok(l) => Some(l),
-            Err(_) if i < 4 => { std::thread::sleep(Duration::from_millis(200)); None },
-            Err(e) => return None,
-        }
+    // Reintenta el bind con SO_REUSEADDR por si el puerto está en TIME_WAIT
+    let listener: TcpListener = (0..10).find_map(|i| {
+        match Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)) {
+            Ok(sock) => {
+                if sock.set_reuse_address(true).is_ok() {
+                    let addr: SocketAddr = "127.0.0.1:43821".parse().unwrap();
+                    let sock_addr: SockAddr = addr.into();
+                    if sock.bind(&sock_addr).is_ok() {
+                        if sock.listen(128).is_ok() {
+                            Some(sock.into())
+                        } else { None }
+                    } else { None }
+                } else { None }
+            }
+            Err(_) => None,
+        }.or_else(|| {
+            if i < 9 { std::thread::sleep(Duration::from_millis(200)); None } else { None }
+        })
     }).ok_or_else(|| "No se pudo iniciar callback OAuth local: el puerto 43821 está en uso".to_string())?;
     listener.set_nonblocking(true).map_err(|e| format!("Callback OAuth local no acepta conexiones: {e}"))?;
     let shared = state.0.clone();
